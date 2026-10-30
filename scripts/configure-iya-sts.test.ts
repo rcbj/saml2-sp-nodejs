@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: MIT
 // The setup script's plan, offline: what it registers, and where.
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { ENCRYPTION, filesOf, idpMetadataUrl, parseArgs, planFor, realmOf } from './configure-iya-sts.ts';
+import { ENCRYPTION, filesOf, ssfCalls, idpMetadataUrl, parseArgs, planFor, realmOf } from './configure-iya-sts.ts';
 
 describe('configure-iya-sts', () => {
   const dir = mkdtempSync(join(tmpdir(), 'saml-setup-'));
@@ -39,6 +39,20 @@ describe('configure-iya-sts', () => {
     assert.ok(plan.some((c) => c.path === 'https://localhost:8081/saml2/metadata/http%3A%2F%2Flocalhost%3A3000%2Fsaml%2Fmetadata'));
     assert.match(plan[plan.length - 1]!.path, /\/users\/create$/);
     assert.equal(planFor(files, 'https://localhost:8081', '', 'x').some((c) => c.path.endsWith('/users/create')), false);
+  });
+
+  it('with an ssf block, gives the application Shared Signals access by its own certificate', () => {
+    const withSsf = join(dir, 'saml-ssf.json');
+    writeFileSync(withSsf, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')), ssf: { transmitter: 'https://localhost:8081' } }));
+    const files = filesOf(withSsf);
+    assert.equal(files.ssfTransmitter, 'https://localhost:8081');
+    const calls = ssfCalls(files, 'https://localhost:8081', 'PEM');
+    assert.deepEqual(calls.map((c) => c.path.replace('https://localhost:8081/admin-api', '')),
+      ['/applications/add', '/roles/add-member', '/tls/trust/add', '/applications/add-certificate']);
+    assert.deepEqual(calls[0]!.body, { application: 'http://localhost:3000/saml/metadata', attribute: 'oauthAllowedScope', value: 'ssf.manage' });
+    assert.deepEqual(calls[1]!.body, { role: 'SSF_MANAGE', kind: 'application', member: 'http://localhost:3000/saml/metadata' });
+    assert.ok(planFor(files, 'https://localhost:8081', '', 'x').some((c) => c.path.endsWith('/applications/add-certificate')));
+    assert.ok(!planFor(filesOf(config), 'https://localhost:8081', '', 'x').some((c) => c.path.endsWith('/applications/add-certificate')), 'no ssf block, no access');
   });
 
   it('keeps a realm\'s base and refuses any other path', () => {

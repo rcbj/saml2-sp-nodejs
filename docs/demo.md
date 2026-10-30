@@ -29,6 +29,20 @@ Open <http://localhost:3000> and pick a response binding:
 
 The AuthnRequest goes on HTTP-Redirect (`requestBinding` in `demo/saml.json`), signed. Sign in as `saml-demo-user`. The page shows the NameID, the binding, the session index, whether the assertion arrived encrypted, and every attribute iya-sts released.
 
+## Shared Signals: signed out by the identity provider
+
+`demo/saml.json`'s `ssf` block makes the demo a CAEP and RISC receiver. It keeps one poll stream at iya-sts, polls it every three seconds, and authenticates with mutual TLS using the SP's own key pair. The home page shows the receiver's state and the events about your session.
+
+Sign in, then do one of these at iya-sts and watch the demo's tab:
+
+- **Sign out** of iya-sts, or end the session on **Monitoring → Sessions**: CAEP `session-revoked` names that IdP session, and the demo session started from it ends.
+- **Disable** the user on their **Directory → Users** page: RISC `account-disabled` ends every demo session of that person.
+- **Change the user's password**: CAEP `credential-change` is listed on the page, and ends nothing (`endOn` decides which events end sessions).
+
+**Needs iya-sts with #1227 and #1230.** #1227 lets an application hold a stored certificate. Until #1230, any write iya-sts made to the application entry erased that certificate: creating the stream, and every SAML sign-in. The receiver then answers 401 (STS-SSF-0151) until the setup script is run again.
+
+When a session ends, its open tab is told at once over Server-Sent Events (`/events`, read by the static `/app.js`) and goes back to the sign-in page. The session itself is already gone on the server, so a closed tab finds it gone on the next request.
+
 ## The container
 
 `demo/generated/` is mounted read-only at `/app/demo/generated`: the key, the certificate, both metadata documents and iya-sts's TLS root. None of them is in the image.

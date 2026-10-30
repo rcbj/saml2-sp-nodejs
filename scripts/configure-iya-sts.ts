@@ -17,6 +17,12 @@
  *      Then the application's assertion encryption is pinned: `saml2EncryptAssertion` TRUE with
  *      AES-256-GCM and RSA-OAEP (SHA-256). The encryption key in the metadata already makes iya-sts
  *      encrypt; these name the algorithms rather than leaving them to the realm's defaults;
+ *   3b. with an `ssf` block in the configuration, the Shared Signals receiver's access, by MUTUAL TLS
+ *      with the service provider's own certificate (no token, no secret): the application declares
+ *      `ssf.manage` and is made a member of the SSF_MANAGE role, the certificate is installed as a
+ *      client trust anchor (`/admin-api/tls/trust/add`) and stored on the application entry
+ *      (`/admin-api/applications/add-certificate`, iya-sts #1227), which is what makes the handshake's
+ *      certificate this application at `/ssf/*`;
  *   4. iya-sts's IdP METADATA for this service provider (`/saml2/metadata/<entityID>`), checked with the
  *      library's own reader and written where the configuration's `idpMetadata` points, so the library
  *      learns the IdP (entityID, SSO and artifact resolution endpoints, signing certificate) from it;
@@ -103,10 +109,12 @@ export interface DemoFiles {
   idpMetadata: string;
   idpCa: string | undefined;
   spMetadata: string;
+  /** The Shared Signals transmitter, when the configuration has an `ssf` block. */
+  ssfTransmitter: string | undefined;
 }
 
 export function filesOf(configPath: string): DemoFiles {
-  const raw = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, string | undefined>;
+  const raw = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, string | undefined> & { ssf?: { transmitter?: string } };
   const base = dirname(configPath);
   const at = (p: string | undefined, what: string) => {
     if (!p || p.includes('-----BEGIN') || /^https?:/.test(p) || p.startsWith('<')) {
@@ -123,6 +131,7 @@ export function filesOf(configPath: string): DemoFiles {
     idpMetadata: at(raw.idpMetadata, 'idpMetadata'),
     idpCa: raw.idpCa ? at(raw.idpCa, 'idpCa') : undefined,
     spMetadata: resolve(dirname(key), 'sp-metadata.xml'),
+    ssfTransmitter: raw.ssf?.transmitter,
   };
 }
 
@@ -160,8 +169,28 @@ export function planFor(files: DemoFiles, base: string, testUser: string, spMeta
   for (const [attribute, value] of Object.entries(ENCRYPTION)) {
     calls.splice(2, 0, { method: 'POST', path: `${base}/admin-api/applications/set`, why: `encrypt the assertion: ${attribute}`, body: { application: files.entityId, attribute, value } });
   }
+  if (files.ssfTransmitter) calls.splice(calls.length - 1, 0, ...ssfCalls(files, base, '<the SP certificate>'));
   if (testUser) calls.push({ method: 'POST', path: `${base}/admin-api/users/create`, why: `create the test user ${testUser}`, body: { username: testUser } });
   return calls;
+}
+
+/**
+ * The Shared Signals receiver's access, authenticated by the SP's certificate over mutual TLS: declare
+ * the SSF write scope (which includes read; iya-sts reads a certificate's scopes literally), hold the
+ * role that authorizes it, trust the self-signed certificate at the handshake, and store it on the
+ * application so the handshake's certificate IS this application.
+ */
+export function ssfCalls(files: DemoFiles, base: string, certificatePem: string) {
+  return [
+    { method: 'POST', path: `${base}/admin-api/applications/add`, why: 'declare the Shared Signals write scope',
+      body: { application: files.entityId, attribute: 'oauthAllowedScope', value: 'ssf.manage' } },
+    { method: 'POST', path: `${base}/admin-api/roles/add-member`, why: 'hold SSF_MANAGE, which authorizes it',
+      body: { role: 'SSF_MANAGE', kind: 'application', member: files.entityId } },
+    { method: 'POST', path: `${base}/admin-api/tls/trust/add`, why: 'trust the SP certificate at the TLS handshake',
+      body: { certificates: certificatePem } },
+    { method: 'POST', path: `${base}/admin-api/applications/add-certificate`, why: 'store the SP certificate on the application',
+      body: { application: files.entityId, certificate: certificatePem } },
+  ];
 }
 
 /** The root of the chain the server presents, taken from the handshake without verifying it. */
@@ -277,6 +306,20 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     if (!set.body.ok) throw new Error(`setting ${attribute}=${value} was refused: ${JSON.stringify(set.body).slice(0, 300)}`);
   }
   console.log('Assertions to it are encrypted: AES-256-GCM, the key wrapped with RSA-OAEP (SHA-256).');
+
+  // 3b. The Shared Signals receiver's access.
+  if (files.ssfTransmitter) {
+    const certificatePem = readFileSync(files.cert, 'utf8');
+    for (const call of ssfCalls(files, base, certificatePem)) {
+      const r = await api(call.path.slice(`${base}/admin-api`.length), call.body);
+      const errors = errorsOf(r.body).join(' ');
+      // Each step is idempotent from here: a value already there, a member already holding the role, an
+      // anchor already installed, a certificate already stored on this entry.
+      if (!r.body.ok && !/already/i.test(errors)) throw new Error(`${call.why}: refused: ${JSON.stringify(r.body).slice(0, 400)}`);
+      if (!r.body.ok) console.log(`  ${call.why}: already so (${errors.slice(0, 160)})`);
+    }
+    console.log(`Shared Signals: ${files.entityId} holds SSF_MANAGE and authenticates to /ssf/* with its own certificate (mutual TLS).`);
+  }
 
   // 4. The IdP metadata, for the library.
   const url = idpMetadataUrl(base, files.entityId);

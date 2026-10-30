@@ -86,9 +86,25 @@ async function acs(req, res) {
 app.get('/saml/metadata', (req, res) => res.type('application/samlmetadata+xml').send(sp.metadata()));
 ```
 
-## 6. Several processes
+## 6. Signed out by the identity provider: Shared Signals
 
-The replay cache remembers accepted assertion IDs in one process's memory. Behind a load balancer, give every process one shared cache: anything with an atomic set-if-absent and an expiry.
+A session at the application outlives a sign-out at the identity provider unless something tells it. `SignalsReceiver` is that something: it receives the identity provider's CAEP and RISC events and ends the matching sessions (see the [reference](../README.md#shared-signals-caep-and-risc)).
+
+```ts
+const signals = new SignalsReceiver({
+  transmitter: 'https://idp.example.com',
+  tls: { ca: sp.config.idpCa, cert: sp.config.certificate.toString(),
+         key: sp.config.privateKey.export({ type: 'pkcs8', format: 'pem' }) as string },
+  onEndSessions: (ids) => ids.forEach((id) => req.sessionStore.destroy(id, () => {})),
+});
+await signals.start();
+```
+
+In the ACS, after `req.session.regenerate()`, call `await signals.track(req.sessionID, who)`; at sign-out, `await signals.untrack(req.sessionID)`. Ending the session in the store is what matters: the browser's next request finds no session. Telling an open tab at once (Server-Sent Events, a WebSocket) is a courtesy on top; the demo does it.
+
+## 7. Several processes
+
+The replay cache remembers accepted assertion IDs in one process's memory, and the Shared Signals session index likewise. Behind a load balancer, give every process one shared replay cache (and one shared `sessionIndex`, with the receiver running in a single process): anything with an atomic set-if-absent and an expiry.
 
 ```ts
 const sp = await ServiceProvider.fromFile('saml.json', {}, {
@@ -101,6 +117,6 @@ const sp = await ServiceProvider.fromFile('saml.json', {}, {
 });
 ```
 
-## 7. Key rollover
+## 8. Key rollover
 
 Generate a new pair (`generate-keys --force`), publish the new metadata to the identity provider, then restart. For the identity provider's own rollover, call `sp.refreshMetadata()` (or restart) after its metadata changes.

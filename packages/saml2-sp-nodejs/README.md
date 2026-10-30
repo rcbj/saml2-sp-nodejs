@@ -96,9 +96,44 @@ The AuthnRequest goes on HTTP-Redirect or HTTP-POST. SAML has no artifact bindin
 
 `EncryptedAssertion`, `EncryptedID` and `EncryptedAttribute` are decrypted with `node:crypto`: AES-GCM or AES-CBC content, the key wrapped with RSA-OAEP (`rsa-oaep-mgf1p`, or XML Encryption 1.1 `rsa-oaep` with one hash for digest and MGF1). **RSA PKCS#1 v1.5 key transport is refused** (it is the padding oracle XML Encryption was broken with). The metadata publishes the encryption key and the algorithms accepted. Set `wantAssertionsEncrypted` to refuse a plaintext assertion.
 
+## Shared Signals: CAEP and RISC
+
+`SignalsReceiver` makes the application a Shared Signals receiver (OpenID SSF 1.0, poll delivery per RFC 8936). It has **one stream** at the identity provider, carrying CAEP session events and RISC account events about **every person** who uses the application. Each event is turned into the application's own sessions to end.
+
+```ts
+import { ServiceProvider, SignalsReceiver } from 'saml2-sp-nodejs';
+
+const sp = await ServiceProvider.fromFile('saml.json');
+const signals = new SignalsReceiver({
+  transmitter: 'https://idp.example.com',
+  // Mutual TLS with the SP's own key pair: no token, no secret.
+  tls: { ca: sp.config.idpCa, cert: sp.config.certificate.toString(),
+         key: sp.config.privateKey.export({ type: 'pkcs8', format: 'pem' }) as string },
+  onEndSessions: (localIds, event) => { for (const id of localIds) sessionStore.destroy(id); },
+});
+signals.on('*', (event) => console.log(event.type, event.subject));
+await signals.start();
+
+// at the ACS, after the session is created:
+await signals.track(session.id, who);
+// at sign-out:
+await signals.untrack(session.id);
+```
+
+- **One stream, found or created.** `start()` reads `/.well-known/ssf-configuration`. It reuses the application's poll stream (`GET` on the configuration endpoint lists the caller's streams) or creates one, then polls.
+- **Every SET is verified before anything acts on it**: the signature against the transmitter's JWKS (RS, PS, ES, EdDSA; the key chosen by `kid`, never from the token), `iss`, `aud` (the stream's), `typ` and `jti`. A SET is acknowledged only once handled. One it refuses is reported in `setErrs` and changes nothing.
+- **Matching events to sessions.** `track()` records three things from the SAML login:
+  - the person's subject, read from `subjectAttribute`, which defaults to iya-sts's (and AD FS's) `nameidentifier` claim and holds `urn:uuid:…`;
+  - their email address;
+  - the IdP session, the assertion's `SessionIndex`, which is the session id a CAEP event names.
+
+  A `session-revoked` naming an IdP session ends only the local sessions started from it. An account event (`account-disabled`, `account-purged`, `credential-compromise`, `sessions-revoked`) ends all of the person's local sessions. `endOn` changes which types end sessions; every event also goes to the `on(type)` handlers.
+- **Several processes.** The default `MemorySessionIndex` is one process's memory. Give every process the same `sessionIndex` (a table, Redis), and run the receiver in one of them, so an event ends sessions wherever they were created.
+- **Authentication.** Use `tls.cert`/`tls.key` (mutual TLS), or `headers()` to supply an `authorization` header for a transmitter that wants a token.
+
 ## Errors
 
-Every failure is a `SamlError` with a `code`: `config`, `metadata`, `binding`, `xml`, `signature`, `status`, `validation`, `replay`, `artifact` or `decryption`. A `status` error carries the identity provider's `status` (`code`, `subCode`, `message`). Log the message; tell the person only that sign-in failed.
+Every failure is a `SamlError` with a `code`: `config`, `metadata`, `binding`, `xml`, `signature`, `status`, `validation`, `replay`, `artifact`, `decryption` or `ssf` (the Shared Signals transmitter or stream). A `status` error carries the identity provider's `status` (`code`, `subCode`, `message`). Log the message; tell the person only that sign-in failed.
 
 ## The command line
 
