@@ -7,7 +7,8 @@
 # WHAT THE SITE IS MADE OF. docs/ is the frame and its pages. Two documents are the package's own files,
 # written once and read in the repository and on npm as well:
 #
-#   packages/saml2-sp-nodejs/docs/guide.md  ->  guide.html
+#   packages/saml2-sp-nodejs/docs/guide.md    ->  guide.html
+#   packages/saml2-sp-nodejs/docs/signals.md  ->  signals.html
 #   packages/saml2-sp-nodejs/README.md      ->  reference.html
 #
 # Their links that leave the package are rewritten in a staging copy: to the page beside them, or to the
@@ -64,8 +65,14 @@ jobs:
                 -e "s#](\.\./\.\./\.\./#](${BLOB}/#g" packages/saml2-sp-nodejs/docs/guide.md
           } > _site_src/guide.md
           {
+            printf -- '---\ntitle: Handling CAEP and RISC events\n---\n\n'
+            sed -e 's#](\.\./README\.md#](reference.md#g' \
+                -e "s#](\.\./\.\./\.\./#](${BLOB}/#g" packages/saml2-sp-nodejs/docs/signals.md
+          } > _site_src/signals.md
+          {
             printf -- '---\ntitle: Configuration and API reference\n---\n\n'
             sed -e 's#](docs/guide\.md#](guide.md#g' \
+                -e 's#](docs/signals\.md#](signals.md#g' \
                 -e "s#](LICENSE)#](${BLOB}/packages/saml2-sp-nodejs/LICENSE)#g" \
                 packages/saml2-sp-nodejs/README.md
           } > _site_src/reference.md
@@ -82,7 +89,7 @@ jobs:
 
       - name: Check the site
         run: |
-          for page in index.html guide.html reference.html configure.html demo.html development.html; do
+          for page in index.html guide.html signals.html reference.html configure.html demo.html development.html; do
             [ -f "_site/$page" ] || { echo "_site/$page is missing." >&2; ls -la _site || true; exit 1; }
           done
 

@@ -10,7 +10,7 @@ import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
-import { EVENT, MemorySessionIndex, SamlError, SignalsReceiver, subjectOf, type SamlLogin, type SignalEvent } from '../src/index.ts';
+import { CAEP_EVENTS, EVENT, MemorySessionIndex, RISC_EVENTS, SamlError, SignalsReceiver, subjectOf, type SamlLogin, type SignalEvent } from '../src/index.ts';
 import { verifyCompactJws } from '../src/ssf/jws.ts';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -161,6 +161,46 @@ describe('the Shared Signals receiver', () => {
     assert.deepEqual(index.byPerson('urn:uuid:carol'), ['L-c1']);
     await r.pollOnce();
     for (const j of [forged, misaddressed, foreign]) assert.ok(j in stub.errs, `${j} reported`);
+  });
+
+  it('names all eight CAEP and fourteen RISC event types', () => {
+    assert.equal(CAEP_EVENTS.length, 8);
+    assert.equal(RISC_EVENTS.length, 14);
+    assert.ok(CAEP_EVENTS.includes(EVENT.riskLevelChange) && RISC_EVENTS.includes(EVENT.optOutEffective));
+  });
+
+  it('acknowledges a valid SET whose handler throws, runs the other handlers, and logs it', async () => {
+    const errors: string[] = [];
+    const seen: string[] = [];
+    const r = new SignalsReceiver({ transmitter: stub.url, onEndSessions: () => { throw new Error('store down'); }, log: { info() {}, warn() {}, error: (m: string) => { errors.push(m); } } });
+    r.on(EVENT.credentialChange, () => { throw new Error('handler bug'); });
+    r.on('*', (e) => { seen.push(e.jti); });
+    await r.start();
+    r.stop();
+    await r.track('L-d1', login('dave', 'IDP-D1'));
+    const j1 = set(stub, EVENT.credentialChange, { format: 'complex', user: { format: 'iss_sub', iss: stub.url, sub: 'urn:uuid:dave' } }, { credential_type: 'password', change_type: 'update' });
+    const j2 = set(stub, EVENT.sessionRevoked, { format: 'complex', user: { format: 'iss_sub', iss: stub.url, sub: 'urn:uuid:dave' }, session: { format: 'opaque', id: 'IDP-D1' } });
+    // Three polls: the first may join the poll start() began; the SETs are handled by then, and their
+    // acknowledgements ride on the poll after that.
+    await r.pollOnce();
+    await r.pollOnce();
+    await r.pollOnce();
+    assert.ok(stub.acked.includes(j1) && stub.acked.includes(j2), 'both acknowledged');
+    assert.ok(!(j1 in stub.errs) && !(j2 in stub.errs), 'neither reported as invalid');
+    assert.deepEqual(seen.sort(), [j1, j2].sort(), 'the * handler still ran for both');
+    assert.ok(errors.some((m) => /handler for .*credential-change threw/.test(m)) && errors.some((m) => /onEndSessions threw/.test(m)));
+  });
+
+  it('never runs two polls at once, so no SET is handled twice', async () => {
+    const seen: string[] = [];
+    const r = new SignalsReceiver({ transmitter: stub.url, onEndSessions: () => {}, log: { info() {}, warn() {}, error() {} } });
+    r.on('*', (e) => { seen.push(e.jti); });
+    await r.start();
+    r.stop();
+    const j = set(stub, EVENT.accountEnabled, { format: 'iss_sub', iss: stub.url, sub: 'urn:uuid:erin' });
+    await Promise.all([r.pollOnce(), r.pollOnce(), r.pollOnce()]);
+    await r.pollOnce();
+    assert.deepEqual(seen.filter((x) => x === j), [j]);
   });
 
   it('refuses a transmitter without poll delivery', async () => {

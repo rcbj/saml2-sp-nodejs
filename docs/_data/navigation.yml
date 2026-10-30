@@ -4,6 +4,7 @@
   items:
     - { title: Overview, url: / }
     - { title: Server-side guide, url: /guide.html }
+    - { title: Handling CAEP and RISC events, url: /signals.html }
     - { title: Configuration and API reference, url: /reference.html }
     - { title: TypeScript API (TypeDoc), url: /api/ }
     - { title: Setting up iya-sts, url: /configure.html }

@@ -100,6 +100,8 @@ const signals = new SignalsReceiver({
 await signals.start();
 ```
 
+React to each event type with your own handler, `signals.on(EVENT.credentialChange, …)`: [Handling CAEP and RISC events](signals.md) has one for every CAEP and RISC type.
+
 In the ACS, after `req.session.regenerate()`, call `await signals.track(req.sessionID, who)`; at sign-out, `await signals.untrack(req.sessionID)`. Ending the session in the store is what matters: the browser's next request finds no session. Telling an open tab at once (Server-Sent Events, a WebSocket) is a courtesy on top; the demo does it.
 
 ## 7. Several processes

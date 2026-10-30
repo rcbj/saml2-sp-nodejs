@@ -9,20 +9,45 @@ const CAEP = 'https://schemas.openid.net/secevent/caep/event-type/';
 const RISC = 'https://schemas.openid.net/secevent/risc/event-type/';
 const SSF = 'https://schemas.openid.net/secevent/ssf/event-type/';
 
+/**
+ * Every event type of OpenID CAEP 1.0 (eight, about sessions) and OpenID RISC 1.0 (fourteen, about
+ * accounts), and SSF 1.0's own two (about the stream). Register a handler with `receiver.on(EVENT.x, …)`.
+ */
 export const EVENT = {
+  // CAEP 1.0
   sessionRevoked: `${CAEP}session-revoked`,
+  tokenClaimsChange: `${CAEP}token-claims-change`,
   credentialChange: `${CAEP}credential-change`,
   assuranceLevelChange: `${CAEP}assurance-level-change`,
-  tokenClaimsChange: `${CAEP}token-claims-change`,
+  deviceComplianceChange: `${CAEP}device-compliance-change`,
+  sessionEstablished: `${CAEP}session-established`,
+  sessionPresented: `${CAEP}session-presented`,
+  riskLevelChange: `${CAEP}risk-level-change`,
+  // RISC 1.0
+  accountCredentialChangeRequired: `${RISC}account-credential-change-required`,
+  accountPurged: `${RISC}account-purged`,
   accountDisabled: `${RISC}account-disabled`,
   accountEnabled: `${RISC}account-enabled`,
-  accountPurged: `${RISC}account-purged`,
+  identifierChanged: `${RISC}identifier-changed`,
+  identifierRecycled: `${RISC}identifier-recycled`,
   credentialCompromise: `${RISC}credential-compromise`,
+  optIn: `${RISC}opt-in`,
+  optOutInitiated: `${RISC}opt-out-initiated`,
+  optOutCancelled: `${RISC}opt-out-cancelled`,
+  optOutEffective: `${RISC}opt-out-effective`,
+  recoveryActivated: `${RISC}recovery-activated`,
+  recoveryInformationChanged: `${RISC}recovery-information-changed`,
+  /** Deprecated by RISC 1.0 in favour of CAEP's session-revoked; still sent by some transmitters. */
   sessionsRevoked: `${RISC}sessions-revoked`,
-  accountCredentialChangeRequired: `${RISC}account-credential-change-required`,
+  // SSF 1.0
   verification: `${SSF}verification`,
   streamUpdated: `${SSF}stream-updated`,
 } as const;
+
+/** The eight CAEP event types. */
+export const CAEP_EVENTS: readonly string[] = Object.values(EVENT).filter((u) => u.startsWith(CAEP));
+/** The fourteen RISC event types. */
+export const RISC_EVENTS: readonly string[] = Object.values(EVENT).filter((u) => u.startsWith(RISC));
 
 /** What the receiver asks the transmitter for by default. */
 export const DEFAULT_EVENTS_REQUESTED: readonly string[] = [

@@ -31,5 +31,5 @@ export { SignalsReceiver } from './ssf/receiver.ts';
 export type { SignalEvent, SignalsReceiverOptions } from './ssf/receiver.ts';
 export { MemorySessionIndex, trackedFrom, DEFAULT_SUBJECT_ATTRIBUTE } from './ssf/session-index.ts';
 export type { SessionIndex, TrackedSession } from './ssf/session-index.ts';
-export { EVENT, DEFAULT_EVENTS_REQUESTED, DEFAULT_ENDING_EVENTS, subjectOf } from './ssf/events.ts';
+export { EVENT, CAEP_EVENTS, RISC_EVENTS, DEFAULT_EVENTS_REQUESTED, DEFAULT_ENDING_EVENTS, subjectOf } from './ssf/events.ts';
 export type { SubjectRef } from './ssf/events.ts';

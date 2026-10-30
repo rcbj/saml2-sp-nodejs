@@ -239,8 +239,21 @@ export class SignalsReceiver {
     if (this.#running) this.#timer = setTimeout(() => void this.#loop(), delay);
   }
 
-  /** One poll: acknowledges what was handled since the last, handles what arrives. Answers whether more is waiting. */
-  async pollOnce(): Promise<boolean> {
+  #inflight: Promise<boolean> | undefined;
+
+  /**
+   * One poll: acknowledges what was handled since the last, handles what arrives. Answers whether more
+   * is waiting. A call while a poll is in flight joins it rather than starting a second one: two
+   * overlapping polls are both handed every SET not yet acknowledged, and would handle each twice.
+   */
+  pollOnce(): Promise<boolean> {
+    this.#inflight ??= this.#pollNow().finally(() => {
+      this.#inflight = undefined;
+    });
+    return this.#inflight;
+  }
+
+  async #pollNow(): Promise<boolean> {
     const url = this.#stream!.delivery!.endpoint_url!;
     const ack = this.#ack.splice(0);
     const setErrs = this.#errs;
@@ -300,10 +313,27 @@ export class SignalsReceiver {
         txn: typeof payload.txn === 'string' ? payload.txn : undefined,
       };
       if (ends) {
-        await this.#o.onEndSessions(sessions, event);
-        for (const id of sessions) await this.#index.remove(id);
+        try {
+          await this.#o.onEndSessions(sessions, event);
+        } catch (err) {
+          // The SET was valid; the application failed to end its sessions. Logged loudly and still
+          // acknowledged, for the reason above, and the sessions stay in the index so a later account
+          // event can still find them.
+          this.#o.log.error(`ssf: onEndSessions threw for ${type} (SET ${jti} is still acknowledged): ${(err as Error).message}`);
+          event.ended = false;
+        }
+        if (event.ended) for (const id of sessions) await this.#index.remove(id);
       }
-      for (const h of [...(this.#handlers.get(type) ?? []), ...(this.#handlers.get('*') ?? [])]) await h(event);
+      // A handler's failure is the APPLICATION's, not the SET's: it is logged, the other handlers still
+      // run, and the SET is still acknowledged. Reporting it in setErrs would tell the transmitter a valid
+      // SET was invalid, and the transmitter drops what it is told is invalid.
+      for (const h of [...(this.#handlers.get(type) ?? []), ...(this.#handlers.get('*') ?? [])]) {
+        try {
+          await h(event);
+        } catch (err) {
+          this.#o.log.error(`ssf: a handler for ${type} threw (SET ${jti} is still acknowledged): ${(err as Error).message}`);
+        }
+      }
     }
   }
 

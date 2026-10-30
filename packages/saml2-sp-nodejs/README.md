@@ -101,7 +101,7 @@ The AuthnRequest goes on HTTP-Redirect or HTTP-POST. SAML has no artifact bindin
 `SignalsReceiver` makes the application a Shared Signals receiver (OpenID SSF 1.0, poll delivery per RFC 8936). It has **one stream** at the identity provider, carrying CAEP session events and RISC account events about **every person** who uses the application. Each event is turned into the application's own sessions to end.
 
 ```ts
-import { ServiceProvider, SignalsReceiver } from 'saml2-sp-nodejs';
+import { EVENT, ServiceProvider, SignalsReceiver } from 'saml2-sp-nodejs';
 
 const sp = await ServiceProvider.fromFile('saml.json');
 const signals = new SignalsReceiver({
@@ -111,6 +111,7 @@ const signals = new SignalsReceiver({
          key: sp.config.privateKey.export({ type: 'pkcs8', format: 'pem' }) as string },
   onEndSessions: (localIds, event) => { for (const id of localIds) sessionStore.destroy(id); },
 });
+signals.on(EVENT.credentialChange, (event) => console.log('credential changed:', event.payload.credential_type));
 signals.on('*', (event) => console.log(event.type, event.subject));
 await signals.start();
 
@@ -128,6 +129,7 @@ await signals.untrack(session.id);
   - the IdP session, the assertion's `SessionIndex`, which is the session id a CAEP event names.
 
   A `session-revoked` naming an IdP session ends only the local sessions started from it. An account event (`account-disabled`, `account-purged`, `credential-compromise`, `sessions-revoked`) ends all of the person's local sessions. `endOn` changes which types end sessions; every event also goes to the `on(type)` handlers.
+- **Handlers, one per event type.** `on(EVENT.x, handler)` for any of CAEP's eight and RISC's fourteen types (`EVENT`, `CAEP_EVENTS`, `RISC_EVENTS`), or `'*'` for all. Handlers run after the SET is verified and before it is acknowledged. One that throws is logged, and the SET is still acknowledged. **[Handling CAEP and RISC events](docs/signals.md)** lists every type, its members, its default and a handler for each.
 - **Several processes.** The default `MemorySessionIndex` is one process's memory. Give every process the same `sessionIndex` (a table, Redis), and run the receiver in one of them, so an event ends sessions wherever they were created.
 - **Authentication.** Use `tls.cert`/`tls.key` (mutual TLS), or `headers()` to supply an `authorization` header for a transmitter that wants a token.
 
