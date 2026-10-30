@@ -31,7 +31,12 @@ The AuthnRequest goes on HTTP-Redirect (`requestBinding` in `demo/saml.json`), s
 
 ## Shared Signals: signed out by the identity provider
 
-`demo/saml.json`'s `ssf` block makes the demo a CAEP and RISC receiver. It keeps one poll stream at iya-sts, polls it every three seconds, and authenticates with mutual TLS using the SP's own key pair. The home page shows the receiver's state and the events about your session.
+`demo/saml.json`'s `ssf` block makes the demo a CAEP and RISC receiver. It keeps one poll stream at iya-sts, polls it every three seconds, and authenticates with mutual TLS using the SP's own key pair.
+
+Once you're signed in, the page has two tabs. **Identity** shows what the SAML assertion said. **CAEP & RISC events** shows two things:
+
+- **The Shared Signals stream:** the receiver's state, the stream and its poll endpoint, how it authenticates, every event type it delivers (marked CAEP or RISC), and which of them end the session. A **Request verification event** button asks iya-sts to send the stream's verification event.
+- **The event log:** every CAEP and RISC event about this session or its person, plus the stream's own events, newest first. Each entry shows its family, what the demo did ("ended this session", or "recorded; this session continues"), the subject (the person's `urn:uuid:` subject, the IdP session), every member the event carried (`initiating_entity`, `reason_admin`, `credential_type`, …) and its `jti`. The page draws itself again when an event arrives.
 
 Sign in, then do one of these at iya-sts and watch the demo's tab:
 

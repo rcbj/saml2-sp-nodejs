@@ -13,4 +13,9 @@ events.addEventListener('signed-out', (e) => {
   events.close();
   setTimeout(() => { location.href = '/'; }, 4000);
 });
-events.addEventListener('signal', () => { location.reload(); });
+// A new event: draw the page again, on the same tab, without a one-off notice (?verify=) from before.
+events.addEventListener('signal', () => {
+  const url = new URL(location.href);
+  url.searchParams.delete('verify');
+  location.replace(url.href);
+});

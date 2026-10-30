@@ -4,13 +4,16 @@
 // The demo: a traditional server-rendered web application that signs people in with SAML 2.0 through
 // saml2-sp-nodejs. node:http and nothing else; Node runs this TypeScript file as it is.
 //
-//   GET  /                the home page: who is signed in, or the sign-in buttons
+//   GET  /                the home page: who is signed in, or the sign-in buttons; ?tab=events shows the
+//                         CAEP and RISC events about this session and the Shared Signals stream
 //   GET  /login           a signed AuthnRequest; ?binding=post|redirect|artifact picks the RESPONSE binding
 //   GET  /saml/acs        the assertion consumer service, for HTTP-Redirect and HTTP-Artifact
 //   POST /saml/acs        the assertion consumer service, for HTTP-POST (and an artifact posted)
 //   GET  /saml/metadata   this service provider's metadata (its entityID)
 //   POST /logout          ends the local session
 //   GET  /events          Server-Sent Events for the signed-in tab: a Shared Signals event ended its session
+//   POST /signals/verify  asks the identity provider for a verification event on the stream
+//   POST /signals/clear   empties this session's event log
 //   GET  /healthz         for the container's health check
 //
 // SHARED SIGNALS: with an `ssf` block in the configuration file the demo is also a CAEP and RISC receiver
@@ -61,11 +64,26 @@ function serviceProvider(): Promise<ServiceProvider> {
   return spPromise;
 }
 
+/** One received event, as the events tab draws it. */
+interface LoggedEvent {
+  at: string;
+  /** The event type URI. */
+  type: string;
+  family: 'CAEP' | 'RISC' | 'SSF';
+  /** Whether it ended this session (for a stream event: never). */
+  ended: boolean;
+  /** Who and what the event names: person, email, IdP session. */
+  subject: string;
+  /** The event's own members: initiating_entity, reason_admin, credential_type, state, ... */
+  members: Record<string, unknown>;
+  jti: string;
+}
+
 interface Session {
   login: SamlLogin;
   expires: number;
   /** Shared Signals events about this session or its person, newest first. */
-  signals: Array<{ at: string; type: string; ended: boolean; detail: string }>;
+  signals: LoggedEvent[];
 }
 const sessions = new Map<string, Session>();
 // The open /events streams of each session, told when a signal arrives or ends it.
@@ -80,6 +98,13 @@ function tell(sid: string, event: string, data: unknown): void {
 }
 
 const shortType = (uri: string) => uri.replace(/^.*\/event-type\//, '');
+const familyOf = (uri: string): LoggedEvent['family'] => (/\/caep\//.test(uri) ? 'CAEP' : /\/risc\//.test(uri) ? 'RISC' : 'SSF');
+
+// The stream's own events (verification, stream-updated) name nobody, so they are not any session's:
+// they are kept here, a few, and every signed-in page shows them in its log.
+const streamLog: LoggedEvent[] = [];
+const STREAM_EVENTS: string[] = [EVENT.verification, EVENT.streamUpdated];
+const LOG_SIZE = 25;
 
 // THE RECEIVER, started once the service provider is loaded. Its state is shown on the home page.
 let receiver: SignalsReceiver | undefined;
@@ -105,15 +130,29 @@ function startReceiver(sp: ServiceProvider): void {
     },
   });
   r.on('*', (event: SignalEvent) => {
-    const detail = [event.subject.person, event.subject.email, event.subject.idpSession && `IdP session ${event.subject.idpSession}`]
-      .filter(Boolean).join(', ');
+    const entry: LoggedEvent = {
+      at: new Date().toISOString(),
+      type: event.type,
+      family: familyOf(event.type),
+      ended: event.ended,
+      subject: [event.subject.person, event.subject.email, event.subject.idpSession && `IdP session ${event.subject.idpSession}`]
+        .filter(Boolean).join(', '),
+      members: event.payload,
+      jti: event.jti,
+    };
+    if (STREAM_EVENTS.includes(event.type)) {
+      streamLog.unshift(entry);
+      streamLog.length = Math.min(streamLog.length, LOG_SIZE);
+      for (const sid of listeners.keys()) tell(sid, 'signal', { type: shortType(event.type) });
+      console.log(`ssf: ${shortType(event.type)} received`);
+      return;
+    }
     for (const sid of event.sessions) {
       const s = sessions.get(sid);
-      s?.signals.unshift({ at: new Date().toISOString(), type: shortType(event.type), ended: event.ended, detail });
-      if (s) s.signals.length = Math.min(s.signals.length, 20);
+      s?.signals.unshift(entry);
+      if (s) s.signals.length = Math.min(s.signals.length, LOG_SIZE);
       if (!event.ended) tell(sid, 'signal', { type: shortType(event.type) });
     }
-    if (event.type === EVENT.verification) console.log('ssf: verification event received');
   });
   receiver = r;
   r.start().then(() => {
@@ -204,13 +243,71 @@ ${body}
 const BINDINGS: ResponseBinding[] = ['post', 'redirect', 'artifact'];
 const BINDING_LABEL: Record<ResponseBinding, string> = { post: 'HTTP-POST', redirect: 'HTTP-Redirect', artifact: 'HTTP-Artifact' };
 
-function home(session: Session | undefined, sp: ServiceProvider | undefined, problem?: string): string {
+type Tab = 'identity' | 'events';
+
+function tabs(active: Tab): string {
+  const tab = (id: Tab, label: string) =>
+    `<a class="page-tab" role="tab" href="/?tab=${id}" aria-selected="${id === active}"${id === active ? ' aria-current="page"' : ''}>${label}</a>`;
+  return `<nav class="page-tabs" role="tablist" aria-label="Sections">${tab('identity', 'Identity')}${tab('events', 'CAEP &amp; RISC events')}</nav>`;
+}
+
+function member(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') {
+    // A language map (reason_admin: { en: "..." }) reads best as its first value; anything else as JSON.
+    const values = Object.values(value as Record<string, unknown>);
+    if (values.length && values.every((v) => typeof v === 'string')) return values.join(' / ');
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function logItem(e: LoggedEvent, own: boolean): string {
+  const members = Object.entries(e.members)
+    .filter(([k]) => k !== 'subject')
+    .map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(member(v))}</td></tr>`).join('');
+  const outcome = !own ? 'about the stream' : e.ended ? 'ended this session' : 'recorded; this session continues';
+  return `<li class="log-item">
+  <div class="log-top"><span class="badge ${e.family.toLowerCase()}">${e.family}</span> <strong>${esc(shortType(e.type))}</strong> <time>${esc(e.at)}</time></div>
+  <p class="log-outcome${e.ended ? ' ended' : ''}">${esc(outcome)}</p>
+  ${e.subject ? `<p><small>Subject: ${esc(e.subject)}</small></p>` : ''}
+  ${members ? `<table class="facts members">${members}</table>` : ''}
+  <p><small>jti ${esc(e.jti)}</small></p>
+</li>`;
+}
+
+function eventsPanel(session: Session, notice?: string): string {
+  const stream = receiver?.stream;
+  const delivered = (stream?.events_delivered ?? []) as string[];
+  const merged = [...session.signals.map((e) => ({ e, own: true })), ...streamLog.map((e) => ({ e, own: false }))]
+    .sort((x, y) => (x.e.at < y.e.at ? 1 : -1));
+  return `<section class="card">
+<h2>Shared Signals stream</h2>
+${notice ? `<p class="notice">${esc(notice)}</p>` : ''}
+<table class="facts">
+<tr><th>Receiver</th><td>${esc(receiverState)}</td></tr>
+${stream ? `<tr><th>Stream</th><td>${esc(stream.stream_id)}<br><small>poll delivery (RFC 8936) at ${esc(stream.delivery?.endpoint_url)}</small></td></tr>
+<tr><th>Authentication</th><td>mutual TLS with this service provider's own certificate</td></tr>
+<tr><th>Delivers</th><td>${delivered.map((t) => `<span class="badge ${familyOf(t).toLowerCase()}">${familyOf(t)}</span> ${esc(shortType(t))}`).join('<br>') || '(nothing yet)'}</td></tr>` : ''}
+<tr><th>Ends this session on</th><td>session-revoked, account-disabled, account-purged, credential-compromise, sessions-revoked</td></tr>
+</table>
+${stream ? '<form method="post" action="/signals/verify" class="inline"><button type="submit">Request verification event</button></form>' : ''}
+</section>
+<section class="card">
+<h2>Event log</h2>
+<p><small>The CAEP and RISC events about this session or its person, and the stream's own events, newest first. The page refreshes itself when one arrives.</small></p>
+${merged.length ? `<ol class="log">${merged.map(({ e, own }) => logItem(e, own)).join('')}</ol>
+<form method="post" action="/signals/clear" class="inline"><button type="submit" class="secondary">Clear this session's log</button></form>`
+    : '<p class="empty">No CAEP or RISC event about this session yet. At the identity provider, change this person\'s password (credential-change), sign them out (session-revoked), or disable them (account-disabled), and watch this tab.</p>'}
+</section>`;
+}
+
+function home(session: Session | undefined, sp: ServiceProvider | undefined, problem?: string, tab: Tab = 'identity', notice?: string): string {
   if (session) {
     const l = session.login;
     const rows = Object.entries(l.attributes).map(([name, values]) =>
       `<tr><th>${esc(l.attributeFriendlyNames[name] ?? name)}${l.attributeFriendlyNames[name] ? `<br><small>${esc(name)}</small>` : ''}</th><td>${values.map(esc).join('<br>')}</td></tr>`).join('');
-    return page('Signed in', `<h1>Signed in as ${esc(l.nameId)}</h1>
-<table class="facts">
+    const identity = `<table class="facts">
 <tr><th>NameID</th><td>${esc(l.nameId)}<br><small>${esc(l.nameIdFormat)}</small></td></tr>
 <tr><th>Identity provider</th><td>${esc(l.issuer)}</td></tr>
 <tr><th>Response binding</th><td>${esc(BINDING_LABEL[l.binding])}</td></tr>
@@ -219,11 +316,13 @@ function home(session: Session | undefined, sp: ServiceProvider | undefined, pro
 <tr><th>Assertion</th><td>${esc(l.assertionId)}<br><small>${l.encrypted ? 'arrived encrypted (EncryptedAssertion), decrypted with this service provider\'s key' : 'arrived in clear'}; signature verified</small></td></tr>
 </table>
 <h2>Attributes</h2>
-${rows ? `<table class="facts">${rows}</table>` : '<p>The identity provider released no attributes.</p>'}
-<h2>Shared Signals</h2>
-<p><small>Receiver: ${esc(receiverState)}</small></p>
-${session.signals.length ? `<table class="facts"><tr><th>When</th><th>Event</th></tr>${session.signals.map((e) => `<tr><td>${esc(e.at)}</td><td>${esc(e.type)}${e.ended ? ' — ended this session' : ''}<br><small>${esc(e.detail)}</small></td></tr>`).join('')}</table>` : '<p>No CAEP or RISC event about this session yet. Sign this person out at the identity provider, disable them, or change their password, and watch this tab.</p>'}
+${rows ? `<table class="facts">${rows}</table>` : '<p>The identity provider released no attributes.</p>'}`;
+    const count = session.signals.length;
+    return page('Signed in', `<h1>Signed in as ${esc(l.nameId)}</h1>
+${tabs(tab)}
 <p id="signal-banner" class="problem" hidden></p>
+<div role="tabpanel">${tab === 'events' ? eventsPanel(session, notice) : `${identity}
+<p><small>${count ? `${count} Shared Signals event(s) about this session: see <a href="/?tab=events">CAEP &amp; RISC events</a>.` : `Receiver: ${esc(receiverState)}`}</small></p>`}</div>
 <form method="post" action="/logout"><button type="submit">Sign out of this application</button></form>
 <script src="/app.js"></script>`);
   }
@@ -291,7 +390,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     } catch (err) {
       problem = `The service provider is not configured yet: ${(err as Error).message}. Run the setup script (npm run configure-iya-sts).`;
     }
-    return send(res, 200, home(session, sp, problem), session ? {
+    const tab = url.searchParams.get('tab') === 'events' ? 'events' : 'identity';
+    const notice = url.searchParams.get('verify') === 'sent'
+      ? 'Verification event requested; it arrives on the next poll and shows in the log.'
+      : url.searchParams.get('verify') === 'failed' ? 'The identity provider refused the verification request; see the demo\'s log.' : undefined;
+    return send(res, 200, home(session, sp, problem, tab, notice), session ? {
       'content-security-policy': "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     } : {});
   }
@@ -347,6 +450,29 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       // A demo shows the reason; a production application logs it and shows only that sign-in failed.
       send(res, 400, page('Sign-in failed', `<h1>Sign-in failed</h1><p class="problem">${esc(what)}</p><p><a href="/">Start again</a></p>`), { 'set-cookie': clearPending });
     }
+    return;
+  }
+
+  if (url.pathname === '/signals/verify' && method === 'POST') {
+    let outcome = 'failed';
+    if (currentSession(req) && receiver?.stream) {
+      try {
+        await receiver.verify(randomBytes(8).toString('hex'));
+        outcome = 'sent';
+      } catch (err) {
+        console.warn(`ssf: verification request refused: ${(err as Error).message}`);
+      }
+    }
+    res.writeHead(303, { location: `/?tab=events&verify=${outcome}`, 'cache-control': 'no-store' });
+    res.end();
+    return;
+  }
+
+  if (url.pathname === '/signals/clear' && method === 'POST') {
+    const s = currentSession(req);
+    if (s) s.signals = [];
+    res.writeHead(303, { location: '/?tab=events', 'cache-control': 'no-store' });
+    res.end();
     return;
   }
 
