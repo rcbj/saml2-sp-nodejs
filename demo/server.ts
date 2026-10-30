@@ -11,7 +11,10 @@
 //   POST /saml/acs        the assertion consumer service, for HTTP-POST (and an artifact posted)
 //   GET  /saml/metadata   this service provider's metadata (its entityID)
 //   POST /logout          ends the local session
-//   GET  /events          Server-Sent Events for the signed-in tab: a Shared Signals event ended its session
+//   GET  /events          Server-Sent Events for the signed-in tab: each event about THIS session or its
+//                         person, as JSON, the moment the receiver has it (and the ones a reconnecting tab
+//                         missed, from Last-Event-ID); the stream's status; and that the session ended
+//   GET  /api/signals     the same events as JSON (?after=<id>), for a tab without a working event stream
 //   POST /signals/verify  asks the identity provider for a verification event on the stream
 //   POST /signals/clear   empties this session's event log
 //   GET  /healthz         for the container's health check
@@ -64,14 +67,18 @@ function serviceProvider(): Promise<ServiceProvider> {
   return spPromise;
 }
 
-/** One received event, as the events tab draws it. */
+/** One received event, as the events tab draws it and the browser receives it. */
 interface LoggedEvent {
+  /** This process's sequence number: the SSE event id, and what ?after= counts from. */
+  id: number;
   at: string;
   /** The event type URI. */
   type: string;
   family: 'CAEP' | 'RISC' | 'SSF';
   /** Whether it ended this session (for a stream event: never). */
   ended: boolean;
+  /** `session`: about this session or its person. `stream`: the verification this session asked for. */
+  about: 'session' | 'stream';
   /** Who and what the event names: person, email, IdP session. */
   subject: string;
   /** The event's own members: initiating_entity, reason_admin, credential_type, state, ... */
@@ -89,9 +96,9 @@ const sessions = new Map<string, Session>();
 // The open /events streams of each session, told when a signal arrives or ends it.
 const listeners = new Map<string, Set<ServerResponse>>();
 
-function tell(sid: string, event: string, data: unknown): void {
+function tell(sid: string, event: string, data: unknown, id?: number): void {
   for (const res of listeners.get(sid) ?? []) {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    res.write(`${id !== undefined ? `id: ${id}\n` : ''}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     if (event === 'signed-out') res.end();
   }
   if (event === 'signed-out') listeners.delete(sid);
@@ -100,11 +107,22 @@ function tell(sid: string, event: string, data: unknown): void {
 const shortType = (uri: string) => uri.replace(/^.*\/event-type\//, '');
 const familyOf = (uri: string): LoggedEvent['family'] => (/\/caep\//.test(uri) ? 'CAEP' : /\/risc\//.test(uri) ? 'RISC' : 'SSF');
 
-// The stream's own events (verification, stream-updated) name nobody, so they are not any session's:
-// they are kept here, a few, and every signed-in page shows them in its log.
-const streamLog: LoggedEvent[] = [];
-const STREAM_EVENTS: string[] = [EVENT.verification, EVENT.streamUpdated];
+// WHO SEES WHAT. A session's log holds only events the receiver matched to that session or its person,
+// and only that session's /events and /api/signals read it: user A never receives an event about user B.
+// The stream's own two events name nobody: a verification goes only to the session that asked for it
+// (by the `state` it sent), and stream-updated changes the stream's status, which carries no person.
 const LOG_SIZE = 25;
+let sequence = 0;
+const verificationsAsked = new Map<string, string>(); // state -> the session that asked
+let streamStatus: { status: string; reason?: unknown; at: string } | undefined;
+
+function logFor(sid: string, entry: LoggedEvent): void {
+  const s = sessions.get(sid);
+  if (!s) return;
+  s.signals.unshift(entry);
+  s.signals.length = Math.min(s.signals.length, LOG_SIZE);
+  tell(sid, 'signal', entry, entry.id);
+}
 
 // THE RECEIVER, started once the service provider is loaded. Its state is shown on the home page.
 let receiver: SignalsReceiver | undefined;
@@ -131,28 +149,31 @@ function startReceiver(sp: ServiceProvider): void {
   });
   r.on('*', (event: SignalEvent) => {
     const entry: LoggedEvent = {
+      id: ++sequence,
       at: new Date().toISOString(),
       type: event.type,
       family: familyOf(event.type),
       ended: event.ended,
+      about: 'session',
       subject: [event.subject.person, event.subject.email, event.subject.idpSession && `IdP session ${event.subject.idpSession}`]
         .filter(Boolean).join(', '),
       members: event.payload,
       jti: event.jti,
     };
-    if (STREAM_EVENTS.includes(event.type)) {
-      streamLog.unshift(entry);
-      streamLog.length = Math.min(streamLog.length, LOG_SIZE);
-      for (const sid of listeners.keys()) tell(sid, 'signal', { type: shortType(event.type) });
-      console.log(`ssf: ${shortType(event.type)} received`);
+    if (event.type === EVENT.verification) {
+      const asker = verificationsAsked.get(String(event.payload.state ?? ''));
+      verificationsAsked.delete(String(event.payload.state ?? ''));
+      if (asker) logFor(asker, { ...entry, about: 'stream' });
+      console.log(`ssf: verification received${asker ? '' : ' (asked by no session here)'}`);
       return;
     }
-    for (const sid of event.sessions) {
-      const s = sessions.get(sid);
-      s?.signals.unshift(entry);
-      if (s) s.signals.length = Math.min(s.signals.length, LOG_SIZE);
-      if (!event.ended) tell(sid, 'signal', { type: shortType(event.type) });
+    if (event.type === EVENT.streamUpdated) {
+      streamStatus = { status: String(event.payload.status ?? ''), reason: event.payload.reason, at: entry.at };
+      for (const sid of listeners.keys()) tell(sid, 'stream', streamStatus);
+      return;
     }
+    // An event that ended a session is not logged there: the session is gone, and its tab was told.
+    if (!event.ended) for (const sid of event.sessions) logFor(sid, entry);
   });
   receiver = r;
   r.start().then(() => {
@@ -245,10 +266,10 @@ const BINDING_LABEL: Record<ResponseBinding, string> = { post: 'HTTP-POST', redi
 
 type Tab = 'identity' | 'events';
 
-function tabs(active: Tab): string {
+function tabs(active: Tab, count = 0): string {
   const tab = (id: Tab, label: string) =>
     `<a class="page-tab" role="tab" href="/?tab=${id}" aria-selected="${id === active}"${id === active ? ' aria-current="page"' : ''}>${label}</a>`;
-  return `<nav class="page-tabs" role="tablist" aria-label="Sections">${tab('identity', 'Identity')}${tab('events', 'CAEP &amp; RISC events')}</nav>`;
+  return `<nav class="page-tabs" role="tablist" aria-label="Sections">${tab('identity', 'Identity')}${tab('events', `CAEP &amp; RISC events <span class="count" id="signal-count">${count || ''}</span>`)}</nav>`;
 }
 
 function member(value: unknown): string {
@@ -262,12 +283,12 @@ function member(value: unknown): string {
   return String(value);
 }
 
-function logItem(e: LoggedEvent, own: boolean): string {
+function logItem(e: LoggedEvent): string {
   const members = Object.entries(e.members)
     .filter(([k]) => k !== 'subject')
     .map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(member(v))}</td></tr>`).join('');
-  const outcome = !own ? 'about the stream' : e.ended ? 'ended this session' : 'recorded; this session continues';
-  return `<li class="log-item">
+  const outcome = e.about === 'stream' ? 'about the stream: the verification this session asked for' : e.ended ? 'ended this session' : 'recorded; this session continues';
+  return `<li class="log-item" data-id="${e.id}">
   <div class="log-top"><span class="badge ${e.family.toLowerCase()}">${e.family}</span> <strong>${esc(shortType(e.type))}</strong> <time>${esc(e.at)}</time></div>
   <p class="log-outcome${e.ended ? ' ended' : ''}">${esc(outcome)}</p>
   ${e.subject ? `<p><small>Subject: ${esc(e.subject)}</small></p>` : ''}
@@ -279,26 +300,26 @@ function logItem(e: LoggedEvent, own: boolean): string {
 function eventsPanel(session: Session, notice?: string): string {
   const stream = receiver?.stream;
   const delivered = (stream?.events_delivered ?? []) as string[];
-  const merged = [...session.signals.map((e) => ({ e, own: true })), ...streamLog.map((e) => ({ e, own: false }))]
-    .sort((x, y) => (x.e.at < y.e.at ? 1 : -1));
+  const lastId = session.signals[0]?.id ?? 0;
   return `<section class="card">
 <h2>Shared Signals stream</h2>
 ${notice ? `<p class="notice">${esc(notice)}</p>` : ''}
 <table class="facts">
 <tr><th>Receiver</th><td>${esc(receiverState)}</td></tr>
+<tr><th>Stream status</th><td id="stream-status">${esc(streamStatus ? `${streamStatus.status} (${streamStatus.at})` : 'enabled')}</td></tr>
 ${stream ? `<tr><th>Stream</th><td>${esc(stream.stream_id)}<br><small>poll delivery (RFC 8936) at ${esc(stream.delivery?.endpoint_url)}</small></td></tr>
 <tr><th>Authentication</th><td>mutual TLS with this service provider's own certificate</td></tr>
 <tr><th>Delivers</th><td>${delivered.map((t) => `<span class="badge ${familyOf(t).toLowerCase()}">${familyOf(t)}</span> ${esc(shortType(t))}`).join('<br>') || '(nothing yet)'}</td></tr>` : ''}
 <tr><th>Ends this session on</th><td>session-revoked, account-disabled, account-purged, credential-compromise, sessions-revoked</td></tr>
 </table>
-${stream ? '<form method="post" action="/signals/verify" class="inline"><button type="submit">Request verification event</button></form>' : ''}
+${stream ? '<form method="post" action="/signals/verify" class="inline" id="verify-form"><button type="submit">Request verification event</button></form>' : ''}
 </section>
 <section class="card">
 <h2>Event log</h2>
-<p><small>The CAEP and RISC events about this session or its person, and the stream's own events, newest first. The page refreshes itself when one arrives.</small></p>
-${merged.length ? `<ol class="log">${merged.map(({ e, own }) => logItem(e, own)).join('')}</ol>
-<form method="post" action="/signals/clear" class="inline"><button type="submit" class="secondary">Clear this session's log</button></form>`
-    : '<p class="empty">No CAEP or RISC event about this session yet. At the identity provider, change this person\'s password (credential-change), sign them out (session-revoked), or disable them (account-disabled), and watch this tab.</p>'}
+<p><small>The CAEP and RISC events about this session or its person, newest first, and the verification events this session asked for. Each appears here within moments of the receiver getting it: <span id="live-state">connecting…</span></small></p>
+<ol class="log" id="log" data-last-id="${lastId}">${session.signals.map((e) => logItem(e)).join('')}</ol>
+<p class="empty" id="log-empty"${session.signals.length ? ' hidden' : ''}>No CAEP or RISC event about this session yet. At the identity provider, change this person's password (credential-change), sign them out (session-revoked), or disable them (account-disabled), and watch this tab.</p>
+<form method="post" action="/signals/clear" class="inline"><button type="submit" class="secondary">Clear this session's log</button></form>
 </section>`;
 }
 
@@ -319,10 +340,10 @@ function home(session: Session | undefined, sp: ServiceProvider | undefined, pro
 ${rows ? `<table class="facts">${rows}</table>` : '<p>The identity provider released no attributes.</p>'}`;
     const count = session.signals.length;
     return page('Signed in', `<h1>Signed in as ${esc(l.nameId)}</h1>
-${tabs(tab)}
+${tabs(tab, count)}
 <p id="signal-banner" class="problem" hidden></p>
-<div role="tabpanel">${tab === 'events' ? eventsPanel(session, notice) : `${identity}
-<p><small>${count ? `${count} Shared Signals event(s) about this session: see <a href="/?tab=events">CAEP &amp; RISC events</a>.` : `Receiver: ${esc(receiverState)}`}</small></p>`}</div>
+<p id="signal-toast" class="notice" hidden></p>
+<div role="tabpanel" id="panel" data-tab="${tab}" data-last-id="${session.signals[0]?.id ?? 0}">${tab === 'events' ? eventsPanel(session, notice) : identity}</div>
 <form method="post" action="/logout"><button type="submit">Sign out of this application</button></form>
 <script src="/app.js"></script>`);
   }
@@ -370,15 +391,33 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const sid = cookies(req).sid;
     if (!sid || !currentSession(req)) return send(res, 204, '');
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', 'x-accel-buffering': 'no' });
-    res.write(': listening\n\n');
+    // A reconnecting EventSource sends the last id it saw; the first connection says ?after=. Either way it
+    // is sent what it missed of THIS session's log, oldest first, before anything new.
+    const after = Number(req.headers['last-event-id'] ?? url.searchParams.get('after') ?? 0) || 0;
+    res.write('retry: 2000\n\n');
+    for (const e of [...currentSession(req)!.signals].reverse()) if (e.id > after) res.write(`id: ${e.id}\nevent: signal\ndata: ${JSON.stringify(e)}\n\n`);
+    if (streamStatus) res.write(`event: stream\ndata: ${JSON.stringify(streamStatus)}\n\n`);
     const set = listeners.get(sid) ?? new Set<ServerResponse>();
     set.add(res);
     listeners.set(sid, set);
+    // A comment now and then keeps an idle connection open through proxies, and lets the server notice a
+    // tab that went away.
+    const keepAlive = setInterval(() => res.write(': keep-alive\n\n'), 20_000);
     req.on('close', () => {
+      clearInterval(keepAlive);
       set.delete(res);
       if (!set.size) listeners.delete(sid);
     });
     return;
+  }
+
+  if (url.pathname === '/api/signals' && method === 'GET') {
+    const session = currentSession(req);
+    const json = { 'content-type': 'application/json', 'cache-control': 'no-store' };
+    if (!session) return send(res, 401, JSON.stringify({ signedIn: false }), json);
+    const after = Number(url.searchParams.get('after') ?? 0) || 0;
+    const events = [...session.signals].reverse().filter((e) => e.id > after);
+    return send(res, 200, JSON.stringify({ signedIn: true, events, lastId: session.signals[0]?.id ?? after, streamStatus: streamStatus ?? null }), json);
   }
 
   if (url.pathname === '/' && method === 'GET') {
@@ -392,7 +431,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
     const tab = url.searchParams.get('tab') === 'events' ? 'events' : 'identity';
     const notice = url.searchParams.get('verify') === 'sent'
-      ? 'Verification event requested; it arrives on the next poll and shows in the log.'
+      ? 'Verification event requested; it shows in the log within a few seconds.'
       : url.searchParams.get('verify') === 'failed' ? 'The identity provider refused the verification request; see the demo\'s log.' : undefined;
     return send(res, 200, home(session, sp, problem, tab, notice), session ? {
       'content-security-policy': "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
@@ -455,13 +494,20 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (url.pathname === '/signals/verify' && method === 'POST') {
     let outcome = 'failed';
-    if (currentSession(req) && receiver?.stream) {
+    const sid = cookies(req).sid;
+    if (sid && currentSession(req) && receiver?.stream) {
       try {
-        await receiver.verify(randomBytes(8).toString('hex'));
+        const state = randomBytes(12).toString('base64url');
+        verificationsAsked.set(state, sid);
+        if (verificationsAsked.size > 1000) verificationsAsked.delete(verificationsAsked.keys().next().value!);
+        await receiver.verify(state);
         outcome = 'sent';
       } catch (err) {
         console.warn(`ssf: verification request refused: ${(err as Error).message}`);
       }
+    }
+    if (String(req.headers.accept ?? '').includes('application/json')) {
+      return send(res, outcome === 'sent' ? 202 : 502, JSON.stringify({ outcome }), { 'content-type': 'application/json', 'cache-control': 'no-store' });
     }
     res.writeHead(303, { location: `/?tab=events&verify=${outcome}`, 'cache-control': 'no-store' });
     res.end();

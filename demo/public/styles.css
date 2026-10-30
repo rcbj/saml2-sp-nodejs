@@ -50,3 +50,7 @@ table.members th { width: 11rem; font-weight: 500; color: var(--muted); }
 form.inline { margin: 0.5rem 0; }
 button.secondary { background: transparent; color: var(--accent); }
 .empty { color: var(--muted); }
+.page-tab .count:not(:empty) { display: inline-block; min-width: 1.4em; padding: 0 0.35em; margin-left: 0.25em; border-radius: 999px; background: var(--accent); color: var(--bg); font-size: 0.75rem; text-align: center; }
+.log-item.fresh { animation: fresh 2.5s ease-out; }
+@keyframes fresh { from { background: color-mix(in srgb, var(--accent) 18%, transparent); } to { background: transparent; } }
+#live-state { font-weight: 600; }

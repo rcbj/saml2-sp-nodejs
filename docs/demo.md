@@ -36,7 +36,18 @@ The AuthnRequest goes on HTTP-Redirect (`requestBinding` in `demo/saml.json`), s
 Once you're signed in, the page has two tabs. **Identity** shows what the SAML assertion said. **CAEP & RISC events** shows two things:
 
 - **The Shared Signals stream:** the receiver's state, the stream and its poll endpoint, how it authenticates, every event type it delivers (marked CAEP or RISC), and which of them end the session. A **Request verification event** button asks iya-sts to send the stream's verification event.
-- **The event log:** every CAEP and RISC event about this session or its person, plus the stream's own events, newest first. Each entry shows its family, what the demo did ("ended this session", or "recorded; this session continues"), the subject (the person's `urn:uuid:` subject, the IdP session), every member the event carried (`initiating_entity`, `reason_admin`, `credential_type`, …) and its `jti`. The page draws itself again when an event arrives.
+- **The event log:** every CAEP and RISC event about this session or its person, plus the verification events this session asked for, newest first. Each entry shows its family, what the demo did ("ended this session", or "recorded; this session continues"), the subject (the person's `urn:uuid:` subject, the IdP session), every member the event carried (`initiating_entity`, `reason_admin`, `credential_type`, …) and its `jti`.
+
+### Events reach the browser within seconds, and only the right browser
+
+The page doesn't reload. Each event is drawn as it arrives: an entry in the log on the events tab, a count on the tab's label, and a notice on the Identity tab. On 8081 an event typically shows within about 3–4 seconds of the change at iya-sts: up to one poll interval (3 s), plus delivery.
+
+- **`GET /events`** is a Server-Sent Events stream. The server sends each event to the session's open tabs as JSON as soon as the receiver has it. Each event carries an `id`; a tab that reconnects (the browser does that by itself) is replayed what it missed.
+- **`GET /api/signals?after=<id>`** returns the same events as JSON. The page polls it every 3 seconds if the event stream can't be kept open. A 401 means the session has ended.
+- **Isolation:** both read only the requesting session's own log. A session's log holds only the events the receiver matched to that session or its person (by the IdP session or the `urn:uuid:` subject), so one person never receives another person's events. A `verification` event goes only to the session that asked for it, matched by the `state` value the request carried. `stream-updated` changes the stream's status shown on the card, which names nobody.
+- **Rendering:** everything an event carries comes from the identity provider, so the page draws it as text, never as HTML. The page's Content-Security-Policy allows only its own script (`/app.js`) and connections back to its own origin.
+
+Verified with two people signed in, in two browsers: a password change for one shows only on that person's page and in their `/api/signals`. A verification request reaches only the page that made it, and ending one person's session at iya-sts signs out only their tab.
 
 Sign in, then do one of these at iya-sts and watch the demo's tab:
 
@@ -64,6 +75,7 @@ To run it without a container: `npm run build && npm start`.
 
 ## How it handles the browser
 
+- **`/events` and `/api/signals`** answer only for the session in the `sid` cookie (see above).
 - **`saml_pending`** holds the outstanding AuthnRequest ids (the last three, so two tabs can sign in at once), HMAC-signed, scoped to `/saml/acs`, for ten minutes. It is `SameSite=None; Secure`, because the HTTP-POST binding brings the browser back with a **cross-site POST**, on which a `Lax` cookie is not sent. Browsers treat `http://localhost` as secure, so this works locally. A deployment needs HTTPS.
 - **`sid`** is the session, `SameSite=Lax; HttpOnly`, set after the Response is accepted, and ending no later than the identity provider's `SessionNotOnOrAfter`.
 - The pages send a strict Content-Security-Policy. The POST-binding page is the one with a script, the auto-submit, allowed by a per-request nonce, and its `form-action` names only the identity provider. It also has a real submit button.
