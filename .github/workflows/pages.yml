@@ -60,7 +60,8 @@ jobs:
           cp -r docs _site_src
           {
             printf -- '---\ntitle: Server-side guide\n---\n\n'
-            sed -e "s#](\.\./\.\./\.\./#](${BLOB}/#g" packages/saml2-sp-nodejs/docs/guide.md
+            sed -e 's#](\.\./README\.md#](reference.md#g' \
+                -e "s#](\.\./\.\./\.\./#](${BLOB}/#g" packages/saml2-sp-nodejs/docs/guide.md
           } > _site_src/guide.md
           {
             printf -- '---\ntitle: Configuration and API reference\n---\n\n'
