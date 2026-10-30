@@ -89,6 +89,11 @@ jobs:
         with:
           node-version: '24.22.1'
 
+      # The library's sources import xml-crypto and @xmldom/xmldom, resolved from the workspace's own
+      # node_modules: TypeDoc type-checks them, so the workspace is installed first.
+      - name: Install the workspace
+        run: npm ci --no-audit --no-fund
+
       # TypeDoc runs on TypeScript 6 (the library builds with 7, the native compiler, which has no JavaScript
       # API for TypeDoc to call), so it is a package of its own, outside the workspace.
       - name: Generate the TypeScript API reference
