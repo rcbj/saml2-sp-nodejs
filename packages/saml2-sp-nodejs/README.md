@@ -2,7 +2,7 @@
 
 A **SAML 2.0 service provider** for server-side Node.js applications: signed AuthnRequests, and Responses received on **HTTP-POST**, **HTTP-Redirect** or **HTTP-Artifact**, validated strictly, with encrypted assertions decrypted. Written in TypeScript, usable from JavaScript (ESM, or `require()` on Node 22.12+). Two runtime dependencies: [`xml-crypto`](https://github.com/node-saml/xml-crypto) and [`@xmldom/xmldom`](https://github.com/xmldom/xmldom). Everything else is `node:crypto`, `node:zlib` and `node:https`.
 
-**Documentation:** <https://rcbj.github.io/saml2-sp-nodejs/>
+**Documentation:** <https://rcbj.github.io/saml2-sp-nodejs/> (guide, Shared Signals handlers, API reference)
 
 ```sh
 npm install saml2-sp-nodejs
