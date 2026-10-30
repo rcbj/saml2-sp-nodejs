@@ -1,0 +1,25 @@
+{
+  "name": "saml2-sp-nodejs-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/saml2-sp-nodejs",
+    "demo"
+  ],
+  "scripts": {
+    "build": "npm run build -w packages/saml2-sp-nodejs",
+    "test": "npm test -w packages/saml2-sp-nodejs && node --test scripts/*.test.mjs scripts/*.test.ts",
+    "start": "node demo/server.ts",
+    "generate-keys": "node packages/saml2-sp-nodejs/src/cli.ts generate-keys --config demo/saml.json",
+    "generate-metadata": "node packages/saml2-sp-nodejs/src/cli.ts metadata --config demo/saml.json --out demo/generated/sp-metadata.xml",
+    "configure-iya-sts": "node scripts/configure-iya-sts.ts",
+    "version:print": "node scripts/version.mjs",
+    "version:check": "node scripts/version.mjs --check-manifests",
+    "version:sync": "node scripts/version.mjs --sync-manifests"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "license": "MIT",
+  "author": "Iya CyberSecurity Solutions, LLC"
+}

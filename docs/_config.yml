@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+#
+# Jekyll configuration for the saml2-sp-nodejs documentation site, laid out like gnap-caep-js's and
+# iya-sts's: the `minima` theme GitHub Pages ships, with a sidebar drawn from _data/navigation.yml.
+# ../.github/workflows/pages.yml builds it. The guide and the reference are the package's own files
+# (packages/saml2-sp-nodejs/docs/guide.md and README.md), copied in by the workflow.
+title: saml2-sp-nodejs
+tagline: documentation
+description: >-
+  A SAML 2.0 service provider for server-side Node.js applications: signed AuthnRequests, Responses
+  on HTTP-POST, HTTP-Redirect or HTTP-Artifact, strict validation and encrypted assertions.
+theme: minima
+show_excerpts: false
+baseurl: "/saml2-sp-nodejs"
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+plugins:
+  - jekyll-relative-links

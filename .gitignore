@@ -1,0 +1,8 @@
+node_modules/
+packages/saml2-sp-nodejs/dist/
+_site_api/
+_site_src/
+_site/
+# The demo's key pair, both metadata documents and the IdP's TLS root, made by the scripts.
+demo/generated/
+*.tgz

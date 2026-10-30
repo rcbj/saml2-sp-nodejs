@@ -1,0 +1,14 @@
+{
+  "name": "saml2-sp-nodejs-demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A traditional server-rendered web application that signs people in with SAML 2.0 through saml2-sp-nodejs.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.ts"
+  },
+  "dependencies": {
+    "saml2-sp-nodejs": "*"
+  },
+  "license": "MIT"
+}

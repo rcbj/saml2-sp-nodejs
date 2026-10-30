@@ -1,0 +1,10 @@
+{
+  "entityId": "http://localhost:3000/saml/metadata",
+  "acsUrl": "http://localhost:3000/saml/acs",
+  "privateKey": "generated/sp.key",
+  "certificate": "generated/sp.crt",
+  "idpMetadata": "generated/idp-metadata.xml",
+  "idpCa": "generated/idp-ca.pem",
+  "responseBinding": "post",
+  "wantAssertionsEncrypted": true
+}

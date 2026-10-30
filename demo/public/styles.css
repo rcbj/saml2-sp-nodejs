@@ -1,0 +1,31 @@
+/* SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC */
+/* SPDX-License-Identifier: MIT */
+:root {
+  --bg: #f7f7f5;
+  --fg: #1d2125;
+  --muted: #5d656d;
+  --line: #d9dcdf;
+  --accent: #2a5db0;
+  --problem: #9b1c1c;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #16191c; --fg: #e6e8ea; --muted: #a2a9b0; --line: #343a40; --accent: #7aa7f0; --problem: #f19a9a; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
+header, main, footer { max-width: 52rem; margin: 0 auto; padding: 1rem; }
+header { border-bottom: 1px solid var(--line); }
+header a { color: var(--fg); font-weight: 600; text-decoration: none; }
+footer { color: var(--muted); font-size: 0.875rem; border-top: 1px solid var(--line); margin-top: 2rem; }
+a { color: var(--accent); }
+h1 { font-size: 1.6rem; }
+.buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.button, button { display: inline-block; padding: 0.55rem 0.9rem; border: 1px solid var(--accent); border-radius: 6px;
+  color: var(--accent); background: transparent; font: inherit; text-decoration: none; cursor: pointer; }
+.button.primary, button { background: var(--accent); color: var(--bg); }
+.problem { color: var(--problem); border-left: 3px solid var(--problem); padding-left: 0.75rem; overflow-wrap: anywhere; }
+table.facts { border-collapse: collapse; width: 100%; margin: 0.5rem 0 1.5rem; }
+table.facts th, table.facts td { text-align: left; vertical-align: top; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+table.facts th { width: 13rem; font-weight: 600; }
+small { color: var(--muted); }

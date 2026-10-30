@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+services:
+  saml-demo:
+    build: .
+    image: saml2-sp-nodejs-demo
+    # The host's network, so that https://localhost:8081 (the IdP's artifact resolution service, called
+    # by this server) is the same address inside the container as in the browser. On Docker Desktop,
+    # turn on host networking (Settings → Resources → Network).
+    network_mode: host
+    environment:
+      PORT: ${PORT:-3000}
+    volumes:
+      - ./demo/generated:/app/demo/generated:ro
+    stop_grace_period: 5s

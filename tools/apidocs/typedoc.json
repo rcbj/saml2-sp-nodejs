@@ -1,0 +1,16 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "name": "saml2-sp-nodejs",
+  "entryPoints": ["../../packages/saml2-sp-nodejs/src/index.ts"],
+  "tsconfig": "tsconfig.json",
+  "out": "../../_site_api/api",
+  "readme": "none",
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "sort": ["kind", "alphabetical"],
+  "githubPages": false,
+  "navigationLinks": {
+    "Documentation": "https://rcbj.github.io/saml2-sp-nodejs/",
+    "GitHub": "https://github.com/rcbj/saml2-sp-nodejs"
+  }
+}

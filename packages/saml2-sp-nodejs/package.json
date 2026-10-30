@@ -1,0 +1,66 @@
+{
+  "name": "saml2-sp-nodejs",
+  "version": "0.1.0",
+  "description": "Server-side SAML 2.0 service provider for Node.js: signed AuthnRequests on HTTP-Redirect or HTTP-POST, and Responses received on HTTP-POST, HTTP-Redirect or HTTP-Artifact (with SOAP artifact resolution), validated strictly. TypeScript, usable from JavaScript.",
+  "homepage": "https://rcbj.github.io/saml2-sp-nodejs/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rcbj/saml2-sp-nodejs.git",
+    "directory": "packages/saml2-sp-nodejs"
+  },
+  "bugs": {
+    "url": "https://github.com/rcbj/saml2-sp-nodejs/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "saml2-sp-nodejs": "./dist/cli.js"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "docs",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.ts",
+    "prepack": "npm run build"
+  },
+  "keywords": [
+    "saml",
+    "saml2",
+    "sso",
+    "service-provider",
+    "http-post",
+    "http-redirect",
+    "http-artifact",
+    "authnrequest",
+    "authentication"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.8.15",
+    "xml-crypto": "^6.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "7.0.2"
+  },
+  "author": "Iya CyberSecurity Solutions, LLC",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

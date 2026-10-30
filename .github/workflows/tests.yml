@@ -1,0 +1,117 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+#
+# Runs the library's test suite and build, then builds the demo app's container and checks what it serves.
+#
+#   test    `npm test` (node:test against the stub identity provider in packages/saml2-sp-nodejs/test,
+#           and the setup script's plan), the TypeScript build (strict), and the check that the committed
+#           package.json versions follow VERSION.
+#   demo    builds the image from the repo-root Dockerfile, starts it with a throwaway key pair and IdP
+#           metadata, waits for its health check, and checks the pages, the security headers, the SP
+#           metadata, and that /login answers a signed AuthnRequest on HTTP-Redirect.
+#
+# Nothing is pushed: the image is built for this run only. Publishing the library is npm-publish.yml's job.
+name: Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Library tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 24.22.1, the 21 October 2026 security release fixing HTTP2Shell / Node2Shell (CVE-2026-111497),
+        # the Dockerfile's; 22.18 is the oldest that runs the TypeScript sources as they are.
+        node: ['22.18.0', '24.22.1']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - name: Check the manifests follow VERSION
+        run: node scripts/version.mjs --check-manifests
+
+  demo:
+    name: Demo container
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.22.1'
+          cache: npm
+      - run: npm ci
+
+      # A throwaway key pair, and the stub identity provider's metadata standing in for iya-sts's.
+      - name: Make the demo's generated files
+        run: |
+          set -euo pipefail
+          npm run generate-keys
+          node --input-type=module -e "
+            import { idpMetadata } from './packages/saml2-sp-nodejs/test/stub-idp.ts';
+            import { writeFileSync, copyFileSync } from 'node:fs';
+            writeFileSync('demo/generated/idp-metadata.xml', idpMetadata());
+            copyFileSync('packages/saml2-sp-nodejs/test/fixtures/idp.crt', 'demo/generated/idp-ca.pem');"
+          chmod a+r demo/generated/*
+
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          push: false
+          tags: saml2-sp-nodejs-demo:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start the container
+        run: |
+          docker run -d --name saml-demo --network host -v "$PWD/demo/generated:/app/demo/generated:ro" saml2-sp-nodejs-demo:ci
+          for i in $(seq 1 30); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' saml-demo)"
+            [ "$status" = healthy ] && { echo "healthy after ${i}s"; exit 0; }
+            [ "$(docker inspect -f '{{.State.Running}}' saml-demo)" = true ] || break
+            sleep 1
+          done
+          docker logs saml-demo >&2
+          exit 1
+
+      - name: Smoke-test what it serves
+        run: |
+          set -euo pipefail
+          BASE=http://localhost:3000
+          fail() { echo "FAIL: $*" >&2; exit 1; }
+          curl -s -D /tmp/h -o /tmp/page.html "$BASE/"
+          header() { grep -i "^$1:" /tmp/h | head -1 | cut -d' ' -f2- | tr -d '\r'; }
+          csp="$(header Content-Security-Policy)"
+          echo "$csp" | grep -q "default-src 'none'" || fail "CSP lacks default-src 'none'"
+          echo "$csp" | grep -q "frame-ancestors 'none'" || fail "CSP lacks frame-ancestors 'none'"
+          [ "$(header X-Frame-Options)" = DENY ] || fail "X-Frame-Options is not DENY"
+          grep -q 'Sign in with SAML 2.0' /tmp/page.html || fail "the home page is not the sign-in page"
+          curl -sf "$BASE/saml/metadata" | grep -q 'AuthnRequestsSigned="true"' || fail "the SP metadata is wrong"
+          loc="$(curl -s -D - -o /dev/null "$BASE/login" | grep -i '^location:' | cut -d' ' -f2 | tr -d '\r')"
+          echo "$loc" | grep -q '^https://idp.test/saml2/sso?SAMLRequest=.*&SigAlg=.*&Signature=' || fail "/login did not answer a signed Redirect AuthnRequest: $loc"
+          curl -s -D - -o /dev/null "$BASE/login" | grep -qi '^set-cookie: saml_pending=.*SameSite=None' || fail "no pending-request cookie"
+          echo "Smoke test passed."
+
+      - name: Container logs
+        if: always()
+        run: docker logs saml-demo 2>&1 | tail -50 || true
