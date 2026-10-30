@@ -8,7 +8,7 @@
 //   saml2-sp-nodejs generate-keys --key sp.key --cert sp.crt --cn name
 //   saml2-sp-nodejs metadata --config saml.json [--out sp-metadata.xml]
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { resolveConfig, type SamlConfig } from './config.ts';
@@ -123,7 +123,18 @@ export async function main(argv: readonly string[] = process.argv.slice(2), out:
   throw new Error(`unknown command ${command}\n\n${USAGE}`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+// Run when this file is the program: compared by REAL path, because npm starts a package's bin through
+// a symlink in node_modules/.bin, which is not this file's path.
+function isMain(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return pathToFileURL(realpathSync(process.argv[1])).href === pathToFileURL(realpathSync(new URL(import.meta.url))).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isMain()) {
   main().catch((err: Error) => {
     process.stderr.write(`${err.message}\n`);
     process.exit(1);

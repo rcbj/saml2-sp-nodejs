@@ -135,10 +135,12 @@ jobs:
           npm install --no-audit --no-fund "${GITHUB_WORKSPACE}/packages/saml2-sp-nodejs/${TARBALL}"
           node --input-type=module -e "import * as m from 'saml2-sp-nodejs'; for (const n of ['ServiceProvider','SamlError','MemoryReplayCache','postFormHtml']) if (!m[n]) throw new Error(n + ' is not exported'); console.log('esm ok');"
           node -e "const m = require('saml2-sp-nodejs'); if (!m.ServiceProvider) throw new Error('require() failed'); console.log('cjs ok');"
-          npx --no-install saml2-sp-nodejs help | grep -q generate-keys && echo "cli ok"
+          npx --no-install saml2-sp-nodejs help > cli.txt
+          grep -q generate-keys cli.txt || { echo "the saml2-sp-nodejs command printed no usage:" >&2; cat cli.txt >&2; exit 1; }
+          echo "cli ok"
           printf '%s\n' "import { ServiceProvider, type SamlLogin } from 'saml2-sp-nodejs';" \
             "export async function f(sp: ServiceProvider): Promise<SamlLogin> { return sp.acs({ method: 'GET', url: '/' }); }" > check.ts
-          printf '%s' '{"compilerOptions":{"noEmit":true,"strict":true,"module":"NodeNext","moduleResolution":"NodeNext","target":"ES2022","skipLibCheck":false,"types":[]},"files":["check.ts"]}' > tsconfig.json
+          printf '%s' '{"compilerOptions":{"noEmit":true,"strict":true,"module":"NodeNext","moduleResolution":"NodeNext","target":"ES2022","skipLibCheck":false,"types":["node"]},"files":["check.ts"]}' > tsconfig.json
           npm install --no-audit --no-fund @types/node@24 >/dev/null
           "${GITHUB_WORKSPACE}/node_modules/.bin/tsc" -p tsconfig.json && echo "types ok"
 
