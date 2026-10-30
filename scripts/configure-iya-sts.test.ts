@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { ENCRYPTION, filesOf, ssfCalls, idpMetadataUrl, parseArgs, planFor, realmOf } from './configure-iya-sts.ts';
+import { ENCRYPTION, MULTIPLE_ACCOUNTS, filesOf, ssfCalls, idpMetadataUrl, parseArgs, planFor, realmOf } from './configure-iya-sts.ts';
 
 describe('configure-iya-sts', () => {
   const dir = mkdtempSync(join(tmpdir(), 'saml-setup-'));
@@ -37,6 +37,7 @@ describe('configure-iya-sts', () => {
     const sets = plan.filter((c) => c.path.endsWith('/applications/set')).map((c) => c.body as { attribute: string; value: string });
     assert.deepEqual(Object.fromEntries(sets.map((s) => [s.attribute, s.value])), ENCRYPTION);
     assert.ok(plan.some((c) => c.path === 'https://localhost:8081/saml2/metadata/http%3A%2F%2Flocalhost%3A3000%2Fsaml%2Fmetadata'));
+    assert.deepEqual(plan.find((c) => c.path.endsWith('/admin-api/config/set'))?.body, MULTIPLE_ACCOUNTS);
     assert.match(plan[plan.length - 1]!.path, /\/users\/create$/);
     assert.equal(planFor(files, 'https://localhost:8081', '', 'x').some((c) => c.path.endsWith('/users/create')), false);
   });

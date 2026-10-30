@@ -17,6 +17,9 @@
  *      Then the application's assertion encryption is pinned: `saml2EncryptAssertion` TRUE with
  *      AES-256-GCM and RSA-OAEP (SHA-256). The encryption key in the metadata already makes iya-sts
  *      encrypt; these name the algorithms rather than leaving them to the realm's defaults;
+ *   3a. turns on `authn.multipleAccounts` for the realm: the demo signs several people in to one browser,
+ *      and with the setting off, iya-sts would END one person's session when the next signs in there
+ *      (and send CAEP session-revoked for it, which ends that person's account here);
  *   3b. with an `ssf` block in the configuration, the Shared Signals receiver's access, by MUTUAL TLS
  *      with the service provider's own certificate (no token, no secret): the application declares
  *      `ssf.manage` and is made a member of the SSF_MANAGE role, the certificate is installed as a
@@ -153,6 +156,9 @@ export const ENCRYPTION: Record<string, string> = {
   saml2KeyTransportAlgorithm: 'rsa-oaep',
 };
 
+/** The realm setting that lets one browser hold several signed-in people (iya-sts #561). */
+export const MULTIPLE_ACCOUNTS = { key: 'authn.multipleAccounts', value: true } as const;
+
 /** The management API calls, in order, as `{ method, path, body, why }`. Pure, for --dry-run and the tests. */
 export function planFor(files: DemoFiles, base: string, testUser: string, spMetadataXml: string) {
   const calls: Array<{ method: string; path: string; body: unknown; why: string }> = [
@@ -166,6 +172,7 @@ export function planFor(files: DemoFiles, base: string, testUser: string, spMeta
     },
     { method: 'GET', path: idpMetadataUrl(base, files.entityId), body: undefined, why: `fetch the IdP metadata into ${files.idpMetadata}` },
   ];
+  calls.splice(2, 0, { method: 'POST', path: `${base}/admin-api/config/set`, why: 'let one browser hold several accounts', body: MULTIPLE_ACCOUNTS });
   for (const [attribute, value] of Object.entries(ENCRYPTION)) {
     calls.splice(2, 0, { method: 'POST', path: `${base}/admin-api/applications/set`, why: `encrypt the assertion: ${attribute}`, body: { application: files.entityId, attribute, value } });
   }
@@ -306,6 +313,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     if (!set.body.ok) throw new Error(`setting ${attribute}=${value} was refused: ${JSON.stringify(set.body).slice(0, 300)}`);
   }
   console.log('Assertions to it are encrypted: AES-256-GCM, the key wrapped with RSA-OAEP (SHA-256).');
+
+  // 3a. Several people in one browser.
+  const multiple = await api('/config/set', MULTIPLE_ACCOUNTS);
+  if (!multiple.body.ok) throw new Error(`setting authn.multipleAccounts was refused: ${JSON.stringify(multiple.body).slice(0, 300)}`);
+  console.log('authn.multipleAccounts is on: one browser may hold several signed-in people.');
 
   // 3b. The Shared Signals receiver's access.
   if (files.ssfTransmitter) {

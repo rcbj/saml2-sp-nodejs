@@ -29,6 +29,17 @@ Open <http://localhost:3000> and pick a response binding:
 
 The AuthnRequest goes on HTTP-Redirect (`requestBinding` in `demo/saml.json`), signed. Sign in as `saml-demo-user`. The page shows the NameID, the binding, the session index, whether the assertion arrived encrypted, and every attribute iya-sts released.
 
+## Several people in one browser
+
+One browser can hold several signed-in people. The account bar at the top of a signed-in page lists them. **Add another account** signs one more person in, and **Sign out of all accounts** ends them all. Each person has their own pages under `/u/<account>/`, where the id is stable for as long as they stay signed in. So two tabs can show two people side by side, and a person signing out never makes another tab show someone else: their old URL says "The account you opened is no longer signed in here."
+
+- **How the browser holds them.** One cookie, `aset`, names an *account set* kept on the server. Each person in it is a session of their own: their own SAML login, attributes, CAEP and RISC events, and live event channel (`/u/<account>/events`, `/u/<account>/api/signals`).
+- **Adding a person** sends the AuthnRequest with `ForceAuthn="true"`, so iya-sts asks who is signing in instead of signing the current person in again by single sign-on. A person already in the set is signed in again in their own place.
+- **iya-sts must allow it.** With iya-sts's `authn.multipleAccounts` off, signing a second person in to the same browser ends the first person's iya-sts session. iya-sts then sends CAEP `session-revoked` for it, which ends that person's account here too. The setup script turns the setting on (see [Setting up iya-sts](configure.md)).
+- **Events stay with their person.** An event about one person reaches only that person's session and tabs. Ending one person's session at iya-sts signs out only their tabs.
+
+Verified on 8081 with two people in one browser and a tab each. A password change for one shows only in that person's tab, and a global logout at iya-sts signs out only that person's tab; the other stays signed in and never reloads.
+
 ## Shared Signals: signed out by the identity provider
 
 `demo/saml.json`'s `ssf` block makes the demo a CAEP and RISC receiver. It keeps one poll stream at iya-sts, polls it every three seconds, and authenticates with mutual TLS using the SP's own key pair.

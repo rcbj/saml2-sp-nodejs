@@ -19,13 +19,14 @@ ADMIN_API_CLIENT_SECRET=… npm run configure-iya-sts
 2. **Saves iya-sts's TLS root** to the `idpCa` file if it does not exist yet. It is taken from the TLS handshake (trust on first use) and its SHA-256 fingerprint is printed: compare it with the Root CA on iya-sts's **Server configuration → PKI** page.
 3. **Writes this service provider's metadata** to `demo/generated/sp-metadata.xml` (the same as `npm run generate-metadata`) and **registers the application from it**: `POST /admin-api/applications/create` with the document in `samlSpMetadata`, which iya-sts consumes on create, or, when the application exists, `POST /admin-api/saml2/upload-metadata`. The assertion consumer service on its three bindings, the signing and encryption certificate and `AuthnRequestsSigned` all come from the document.
 4. **Pins assertion encryption** on the application: `saml2EncryptAssertion` TRUE, `saml2EncryptionAlgorithm` `aes256-gcm`, `saml2KeyTransportAlgorithm` `rsa-oaep`. (iya-sts already encrypts to a service provider whose metadata publishes an encryption key; these name the algorithms.)
-5. **With an `ssf` block in the configuration, gives the application Shared Signals access by its own certificate** (mutual TLS: no token, no secret):
+5. **Turns on `authn.multipleAccounts` for the realm** (`POST /admin-api/config/set`), so one browser may hold several signed-in people. The demo signs several people in to one browser. With the setting off, iya-sts ends the first person's session when the second signs in there, and sends CAEP `session-revoked` for it, which ends that person's account in the demo too.
+6. **With an `ssf` block in the configuration, gives the application Shared Signals access by its own certificate** (mutual TLS: no token, no secret):
    - `POST /admin-api/applications/add`: `oauthAllowedScope` `ssf.manage` (which includes read; iya-sts reads a certificate's scopes as declared);
    - `POST /admin-api/roles/add-member`: the application in `SSF_MANAGE`, the role that authorizes the scope;
    - `POST /admin-api/tls/trust/add`: the SP certificate as a client trust anchor, so the TLS handshake accepts it (process-wide; at most 32 anchors);
    - `POST /admin-api/applications/add-certificate` (iya-sts #1227): the certificate stored on the application entry, which makes a handshake presenting it this application at `/ssf/*`.
-6. **Fetches iya-sts's metadata for this application**, `/saml2/metadata/<entityID>`, checks it with the library's own reader, and saves it where `idpMetadata` points. Its entityID, the SSO and artifact resolution endpoints and the signing certificate come from it.
-7. **Creates a test user**, `saml-demo-user`. Its password is `SAML_DEMO_USER_PASSWORD`, or one is generated and printed once. With `SAML_DEMO_USER_PASSWORD` set, an existing user's password is replaced.
+7. **Fetches iya-sts's metadata for this application**, `/saml2/metadata/<entityID>`, checks it with the library's own reader, and saves it where `idpMetadata` points. Its entityID, the SSO and artifact resolution endpoints and the signing certificate come from it.
+8. **Creates a test user**, `saml-demo-user`. Its password is `SAML_DEMO_USER_PASSWORD`, or one is generated and printed once. With `SAML_DEMO_USER_PASSWORD` set, an existing user's password is replaced.
 
 Every step can be run again: an existing application has its metadata consumed again, and an existing key pair, CA file and user are kept.
 

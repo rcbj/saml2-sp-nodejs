@@ -104,7 +104,20 @@ React to each event type with your own handler, `signals.on(EVENT.credentialChan
 
 In the ACS, after `req.session.regenerate()`, call `await signals.track(req.sessionID, who)`; at sign-out, `await signals.untrack(req.sessionID)`. Ending the session in the store is what matters: the browser's next request finds no session. Telling an open tab at once (Server-Sent Events, a WebSocket) is a courtesy on top; the demo does it.
 
-## 7. Several processes
+## 7. Several people in one browser
+
+The library is per sign-in, so several people in one browser is the application's session design. A pattern that fits a server-rendered application, and that the [demo](../../../demo/server.ts) implements:
+
+- **One cookie names an account set** held on the server: the people signed in to this browser, each with their own session.
+- **The URL says which person a tab is for**, as a stable per-account id (`/u/<account>/…`), not a position. A cookie is shared by every tab, so it can't say that.
+- **Adding a person:** `sp.login({ forceAuthn: true })`, so the identity provider authenticates someone instead of signing the current person in again.
+- **Signing a known person in again:** `sp.login({ forceAuthn: true, subjectHint: who.nameId, subjectHintFormat: who.nameIdFormat })`. The hint becomes the AuthnRequest's `<saml:Subject>`, which tells an identity provider holding several accounts which one to use.
+
+The trap: **the ACS cannot read a `SameSite=Lax` cookie when the Response arrives by HTTP-POST.** It's a cross-site POST, so the browser leaves such cookies off. Note the account set in the cookie that carries the request id: it's scoped to the ACS, `SameSite=None` and signed. Otherwise every POST-binding sign-in starts a new set and the browser forgets everyone else.
+
+The identity provider must also let one browser hold several sessions. Otherwise a second sign-in ends the first person's IdP session, and its CAEP `session-revoked` then ends their session here too.
+
+## 8. Several processes
 
 The replay cache remembers accepted assertion IDs in one process's memory, and the Shared Signals session index likewise. Behind a load balancer, give every process one shared replay cache (and one shared `sessionIndex`, with the receiver running in a single process): anything with an atomic set-if-absent and an expiry.
 
@@ -119,6 +132,6 @@ const sp = await ServiceProvider.fromFile('saml.json', {}, {
 });
 ```
 
-## 8. Key rollover
+## 9. Key rollover
 
 Generate a new pair (`generate-keys --force`), publish the new metadata to the identity provider, then restart. For the identity provider's own rollover, call `sp.refreshMetadata()` (or restart) after its metadata changes.

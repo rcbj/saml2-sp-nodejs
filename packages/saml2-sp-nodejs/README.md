@@ -152,7 +152,7 @@ npx saml2-sp-nodejs metadata --config saml.json --out sp-metadata.xml
 |---|---|
 | `ServiceProvider.fromFile(path, overrides?, options?)` | Read a JSON configuration (paths relative to it) and load the IdP metadata. |
 | `ServiceProvider.create(config, { baseDir?, replayCache? })` | The same from an object. |
-| `sp.login({ relayState?, forceAuthn?, isPassive?, requestBinding?, responseBinding?, nonce? })` | A signed AuthnRequest: `{ id, binding, responseBinding, url, xml }`, plus `fields` and `html` for POST. `nonce` puts a CSP nonce on the auto-submit script. |
+| `sp.login({ relayState?, forceAuthn?, isPassive?, subjectHint?, subjectHintFormat?, requestBinding?, responseBinding?, nonce? })` | A signed AuthnRequest: `{ id, binding, responseBinding, url, xml }`, plus `fields` and `html` for POST. `nonce` puts a CSP nonce on the auto-submit script. |
 | `sp.acs({ method, url, body? }, { requestId? })` | Validate the Response; resolves to a `SamlLogin`. `body` is the raw form text or a parsed object. |
 | `sp.metadata()` | This service provider's metadata. |
 | `sp.refreshMetadata()` | Read the IdP metadata again (a key rollover). |

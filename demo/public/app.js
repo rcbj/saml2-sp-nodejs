@@ -11,7 +11,9 @@
 //   - `signed-out` (or a 401 from the API) means the session is already gone on the server: say why and
 //     go back to the sign-in page.
 //
-// The server only ever sends this tab events about its own session or person, so nothing here filters.
+// The page is ONE account's (its URL is /u/<account>/, in data-base): the event stream, the API and every
+// link here are that account's, and the server only ever sends them events about that account's session
+// or person, so nothing here filters. Another account in the same browser has its own tabs and streams.
 // Everything an event carries is identity provider data and is drawn with textContent, never as HTML.
 
 const panel = document.getElementById('panel');
@@ -23,6 +25,7 @@ const banner = document.getElementById('signal-banner');
 const liveState = document.getElementById('live-state');
 const streamStatus = document.getElementById('stream-status');
 const onEventsTab = panel?.dataset.tab === 'events';
+const base = panel?.dataset.base || '';
 let lastId = Number(panel?.dataset.lastId || 0);
 let total = Number(count?.textContent || 0);
 let events;
@@ -77,7 +80,7 @@ function receive(e) {
     log.prepend(entryNode(e));
     if (logEmpty) logEmpty.hidden = true;
   } else if (toast) {
-    toast.replaceChildren(`New ${e.family} event: ${shortType(e.type)}. `, el('a', { href: '/?tab=events' }, 'See it'));
+    toast.replaceChildren(`New ${e.family} event: ${shortType(e.type)}. `, el('a', { href: `${base}/?tab=events` }, 'See it'));
     toast.hidden = false;
   }
 }
@@ -98,7 +101,7 @@ function signedOut(type, reason) {
 // The fallback: ask the API for what arrived after the last event shown.
 async function poll() {
   try {
-    const r = await fetch(`/api/signals?after=${lastId}`, { headers: { accept: 'application/json' }, credentials: 'same-origin' });
+    const r = await fetch(`${base}/api/signals?after=${lastId}`, { headers: { accept: 'application/json' }, credentials: 'same-origin' });
     if (r.status === 401) return signedOut();
     const body = await r.json();
     for (const e of body.events) receive(e);
@@ -112,7 +115,7 @@ async function poll() {
 
 function listen() {
   if (!('EventSource' in window)) return poll();
-  events = new EventSource(`/events?after=${lastId}`);
+  events = new EventSource(`${base}/events?after=${lastId}`);
   events.addEventListener('open', () => setLive('live'));
   events.addEventListener('signal', (m) => receive(JSON.parse(m.data)));
   events.addEventListener('stream', (m) => {
@@ -123,6 +126,8 @@ function listen() {
     const { type, reason } = JSON.parse(m.data);
     signedOut(type, reason);
   });
+  // This account was signed in again (another tab, the same person): its page is a new session's now.
+  events.addEventListener('replaced', () => { location.reload(); });
   events.addEventListener('error', () => {
     // The browser reconnects by itself (and is replayed what it missed). Only if it gave up, poll instead.
     setLive('reconnecting…');
@@ -136,7 +141,7 @@ document.getElementById('verify-form')?.addEventListener('submit', async (ev) =>
   const button = ev.target.querySelector('button');
   button.disabled = true;
   try {
-    const r = await fetch('/signals/verify', { method: 'POST', headers: { accept: 'application/json' }, credentials: 'same-origin' });
+    const r = await fetch(`${base}/signals/verify`, { method: 'POST', headers: { accept: 'application/json' }, credentials: 'same-origin' });
     const { outcome } = await r.json();
     setLive(outcome === 'sent' ? 'live — verification requested' : 'live — the verification request was refused');
   } finally {

@@ -97,6 +97,20 @@ describe('the AuthnRequest', () => {
     assert.match(req.html, /<button type="submit">/);
   });
 
+  it('carries a subject hint as the AuthnRequest\'s Subject, after the Issuer and its signature', async () => {
+    const sp = await ServiceProvider.create(config({ requestBinding: 'post' }));
+    const req = sp.login({ subjectHint: 'alice<&>', subjectHintFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified', forceAuthn: true });
+    if (req.binding !== 'post') return;
+    const xml = Buffer.from(req.fields.SAMLRequest!, 'base64').toString();
+    assert.match(xml, /<\/ds:Signature><saml:Subject><saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified">alice&lt;&amp;&gt;<\/saml:NameID><\/saml:Subject><samlp:NameIDPolicy/);
+    assert.match(xml, /ForceAuthn="true"/);
+    const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    const sig = new SignedXml({ publicCert: SP_CERT, getCertFromKeyInfo: () => null });
+    sig.loadSignature(doc.getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#', 'Signature')[0] as never);
+    assert.ok(sig.checkSignature(xml), 'still verifies');
+    assert.doesNotMatch(sp.login().xml, /<saml:Subject>/, 'no hint, no Subject');
+  });
+
   it('refuses a RelayState over 80 bytes', async () => {
     const sp = await ServiceProvider.create(config());
     assert.throws(() => sp.login({ relayState: 'x'.repeat(81) }), /80 bytes/);

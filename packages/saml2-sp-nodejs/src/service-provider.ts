@@ -39,6 +39,15 @@ export interface LoginOptions {
   forceAuthn?: boolean;
   /** Ask the identity provider not to interact with the person. */
   isPassive?: boolean;
+  /**
+   * Who the request is for: sent as the AuthnRequest's `<saml:Subject><saml:NameID>` (Core 3.4.1), a
+   * hint like OIDC's `login_hint`. An identity provider holding several accounts in one browser uses it
+   * to pick that account, or pre-fills its sign-in screen with it. It is never proof of who signs in:
+   * the Response's assertion says that.
+   */
+  subjectHint?: string;
+  /** The hint's NameID Format, e.g. the one the identity provider issued it in (`SamlLogin.nameIdFormat`). */
+  subjectHintFormat?: string;
   requestBinding?: RequestBinding;
   responseBinding?: ResponseBinding;
   /** For `requestBinding: 'post'`: a CSP nonce for the auto-submit script on the form page. */
@@ -153,6 +162,9 @@ export class ServiceProvider {
     const id = newId(randomBytes(20).toString('hex'));
     const forceAuthn = options.forceAuthn ? ' ForceAuthn="true"' : '';
     const isPassive = options.isPassive ? ' IsPassive="true"' : '';
+    const subject = options.subjectHint
+      ? `<saml:Subject><saml:NameID${options.subjectHintFormat ? ` Format="${escapeXml(options.subjectHintFormat)}"` : ''}>${escapeXml(options.subjectHint)}</saml:NameID></saml:Subject>`
+      : '';
     const policy = this.config.nameIdFormat
       ? `<samlp:NameIDPolicy Format="${escapeXml(this.config.nameIdFormat)}" AllowCreate="true"/>`
       : '<samlp:NameIDPolicy AllowCreate="true"/>';
@@ -160,6 +172,7 @@ export class ServiceProvider {
       + ` IssueInstant="${new Date().toISOString()}" Destination="${escapeXml(destination)}"`
       + ` AssertionConsumerServiceURL="${escapeXml(this.config.acsUrl)}" ProtocolBinding="${BINDING_URI[responseBinding]}"${forceAuthn}${isPassive}>`
       + `<saml:Issuer>${escapeXml(this.config.entityId)}</saml:Issuer>`
+      + subject
       + policy
       + '</samlp:AuthnRequest>';
 
