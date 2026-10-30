@@ -17,6 +17,7 @@
  * - `replay`: the assertion has been accepted before.
  * - `artifact`: the artifact could not be resolved.
  * - `decryption`: an encrypted assertion or NameID could not be decrypted.
+ * - `ssf`: the Shared Signals transmitter could not be found, or its stream created or polled.
  */
 export type SamlErrorCode =
   | 'config'
@@ -28,7 +29,8 @@ export type SamlErrorCode =
   | 'validation'
   | 'replay'
   | 'artifact'
-  | 'decryption';
+  | 'decryption'
+  | 'ssf';
 
 /** The status an identity provider answered with, when it was not `Success`. */
 export interface SamlStatus {

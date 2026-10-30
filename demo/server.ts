@@ -10,7 +10,13 @@
 //   POST /saml/acs        the assertion consumer service, for HTTP-POST (and an artifact posted)
 //   GET  /saml/metadata   this service provider's metadata (its entityID)
 //   POST /logout          ends the local session
+//   GET  /events          Server-Sent Events for the signed-in tab: a Shared Signals event ended its session
 //   GET  /healthz         for the container's health check
+//
+// SHARED SIGNALS: with an `ssf` block in the configuration file the demo is also a CAEP and RISC receiver
+// (the library's SignalsReceiver): one poll stream at the identity provider, authenticated by mutual TLS
+// with the service provider's own key pair. An event that revokes a session, or disables, purges or
+// compromises an account, ENDS the matching local sessions here, and their open tabs are told at once.
 //
 // Two cookies. `saml_pending` holds the outstanding AuthnRequest ids, HMAC-signed, scoped to the ACS,
 // and SameSite=None: the identity provider's HTTP-POST binding brings the browser back with a CROSS-SITE
@@ -21,7 +27,7 @@ import { readFileSync } from 'node:fs';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SamlError, ServiceProvider, type ResponseBinding, type SamlLogin } from 'saml2-sp-nodejs';
+import { EVENT, SamlError, ServiceProvider, SignalsReceiver, type ResponseBinding, type SamlLogin, type SignalEvent } from 'saml2-sp-nodejs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -31,12 +37,24 @@ const SESSION_MS = 8 * 3600_000;
 const MAX_SESSIONS = 10_000;
 const MAX_BODY = 512 * 1024;
 const STYLES = readFileSync(resolve(here, 'public/styles.css'));
+const APP_JS = readFileSync(resolve(here, 'public/app.js'));
+const SSF = (() => {
+  try {
+    const raw = JSON.parse(readFileSync(CONFIG, 'utf8')) as { ssf?: { transmitter?: string; pollIntervalMs?: number } };
+    return raw.ssf?.transmitter ? raw.ssf : undefined;
+  } catch {
+    return undefined;
+  }
+})();
 
 // The service provider is built on first use and again after a failure, so the demo starts (and is
 // healthy) before the identity provider is reachable or the setup script has been run.
 let spPromise: Promise<ServiceProvider> | undefined;
 function serviceProvider(): Promise<ServiceProvider> {
-  spPromise ??= ServiceProvider.fromFile(CONFIG).catch((err: unknown) => {
+  spPromise ??= ServiceProvider.fromFile(CONFIG).then((sp) => {
+    startReceiver(sp);
+    return sp;
+  }, (err: unknown) => {
     spPromise = undefined;
     throw err;
   });
@@ -46,8 +64,66 @@ function serviceProvider(): Promise<ServiceProvider> {
 interface Session {
   login: SamlLogin;
   expires: number;
+  /** Shared Signals events about this session or its person, newest first. */
+  signals: Array<{ at: string; type: string; ended: boolean; detail: string }>;
 }
 const sessions = new Map<string, Session>();
+// The open /events streams of each session, told when a signal arrives or ends it.
+const listeners = new Map<string, Set<ServerResponse>>();
+
+function tell(sid: string, event: string, data: unknown): void {
+  for (const res of listeners.get(sid) ?? []) {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    if (event === 'signed-out') res.end();
+  }
+  if (event === 'signed-out') listeners.delete(sid);
+}
+
+const shortType = (uri: string) => uri.replace(/^.*\/event-type\//, '');
+
+// THE RECEIVER, started once the service provider is loaded. Its state is shown on the home page.
+let receiver: SignalsReceiver | undefined;
+let receiverState = SSF ? 'starting' : 'not configured (no ssf block in the configuration file)';
+function startReceiver(sp: ServiceProvider): void {
+  if (!SSF || receiver) return;
+  const r = new SignalsReceiver({
+    transmitter: SSF.transmitter!,
+    // Mutual TLS with the service provider's own key pair: no secret, nothing to rotate but the key.
+    tls: {
+      ...(sp.config.idpCa ? { ca: sp.config.idpCa } : {}),
+      cert: sp.config.certificate.toString(),
+      key: sp.config.privateKey.export({ type: 'pkcs8', format: 'pem' }) as string,
+    },
+    description: `saml2-sp-nodejs demo (${sp.config.entityId})`,
+    ...(SSF.pollIntervalMs ? { pollIntervalMs: SSF.pollIntervalMs } : {}),
+    onEndSessions: (ids: string[], event: SignalEvent) => {
+      for (const sid of ids) {
+        sessions.delete(sid);
+        tell(sid, 'signed-out', { type: shortType(event.type), reason: event.payload.reason_user ?? event.payload.reason_admin ?? null });
+      }
+      console.log(`ssf: ${shortType(event.type)} ended ${ids.length} local session(s)`);
+    },
+  });
+  r.on('*', (event: SignalEvent) => {
+    const detail = [event.subject.person, event.subject.email, event.subject.idpSession && `IdP session ${event.subject.idpSession}`]
+      .filter(Boolean).join(', ');
+    for (const sid of event.sessions) {
+      const s = sessions.get(sid);
+      s?.signals.unshift({ at: new Date().toISOString(), type: shortType(event.type), ended: event.ended, detail });
+      if (s) s.signals.length = Math.min(s.signals.length, 20);
+      if (!event.ended) tell(sid, 'signal', { type: shortType(event.type) });
+    }
+    if (event.type === EVENT.verification) console.log('ssf: verification event received');
+  });
+  receiver = r;
+  r.start().then(() => {
+    receiverState = `polling stream ${r.stream?.stream_id} at ${SSF.transmitter}`;
+  }, (err: Error) => {
+    receiverState = `not running: ${err.message}`;
+    receiver = undefined;
+    console.warn(`ssf: the receiver did not start: ${err.message}`);
+  });
+}
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const mac = (value: string) => createHmac('sha256', SECRET).update(value).digest('base64url');
@@ -144,7 +220,12 @@ function home(session: Session | undefined, sp: ServiceProvider | undefined, pro
 </table>
 <h2>Attributes</h2>
 ${rows ? `<table class="facts">${rows}</table>` : '<p>The identity provider released no attributes.</p>'}
-<form method="post" action="/logout"><button type="submit">Sign out of this application</button></form>`);
+<h2>Shared Signals</h2>
+<p><small>Receiver: ${esc(receiverState)}</small></p>
+${session.signals.length ? `<table class="facts"><tr><th>When</th><th>Event</th></tr>${session.signals.map((e) => `<tr><td>${esc(e.at)}</td><td>${esc(e.type)}${e.ended ? ' — ended this session' : ''}<br><small>${esc(e.detail)}</small></td></tr>`).join('')}</table>` : '<p>No CAEP or RISC event about this session yet. Sign this person out at the identity provider, disable them, or change their password, and watch this tab.</p>'}
+<p id="signal-banner" class="problem" hidden></p>
+<form method="post" action="/logout"><button type="submit">Sign out of this application</button></form>
+<script src="/app.js"></script>`);
   }
   const requestBinding = sp ? (sp.config.requestBinding === 'post' ? 'HTTP-POST' : 'HTTP-Redirect') : '(configuration not loaded)';
   const buttons = BINDINGS.map((b) => `<a class="button${b === sp?.config.responseBinding ? ' primary' : ''}" href="/login?binding=${b}">Sign in — response by ${BINDING_LABEL[b]}</a>`).join('\n');
@@ -184,6 +265,22 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (url.pathname === '/healthz') return send(res, 200, 'ok', { 'content-type': 'text/plain' });
   if (url.pathname === '/styles.css') return send(res, 200, STYLES, { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'max-age=300' });
+  if (url.pathname === '/app.js') return send(res, 200, APP_JS, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'max-age=300' });
+
+  if (url.pathname === '/events' && method === 'GET') {
+    const sid = cookies(req).sid;
+    if (!sid || !currentSession(req)) return send(res, 204, '');
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', 'x-accel-buffering': 'no' });
+    res.write(': listening\n\n');
+    const set = listeners.get(sid) ?? new Set<ServerResponse>();
+    set.add(res);
+    listeners.set(sid, set);
+    req.on('close', () => {
+      set.delete(res);
+      if (!set.size) listeners.delete(sid);
+    });
+    return;
+  }
 
   if (url.pathname === '/' && method === 'GET') {
     const session = currentSession(req);
@@ -194,7 +291,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     } catch (err) {
       problem = `The service provider is not configured yet: ${(err as Error).message}. Run the setup script (npm run configure-iya-sts).`;
     }
-    return send(res, 200, home(session, sp, problem));
+    return send(res, 200, home(session, sp, problem), session ? {
+      'content-security-policy': "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    } : {});
   }
 
   if (url.pathname === '/saml/metadata' && method === 'GET') {
@@ -236,7 +335,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       if (sessions.size >= MAX_SESSIONS) throw new Error('too many sessions');
       const sid = randomBytes(32).toString('base64url');
       const until = Math.min(Date.now() + SESSION_MS, login.sessionNotOnOrAfter?.getTime() ?? Infinity);
-      sessions.set(sid, { login, expires: until });
+      sessions.set(sid, { login, expires: until, signals: [] });
+      await receiver?.track(sid, login, new Date(until));
       console.log(`signed in ${login.nameId} by ${login.binding} (assertion ${login.assertionId})`);
       const target = login.relayState?.startsWith('/') && !login.relayState.startsWith('//') ? login.relayState : '/';
       res.writeHead(303, { location: target, 'set-cookie': [clearPending, cookie('sid', sid, { maxAge: Math.floor((until - Date.now()) / 1000) })], 'cache-control': 'no-store' });
@@ -252,7 +352,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (url.pathname === '/logout' && method === 'POST') {
     const sid = cookies(req).sid;
-    if (sid) sessions.delete(sid);
+    if (sid) {
+      sessions.delete(sid);
+      await receiver?.untrack(sid);
+    }
     res.writeHead(303, { location: '/', 'set-cookie': cookie('sid', '', { maxAge: 0 }), 'cache-control': 'no-store' });
     res.end();
     return;

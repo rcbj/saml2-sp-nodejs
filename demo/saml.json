@@ -6,5 +6,9 @@
   "idpMetadata": "generated/idp-metadata.xml",
   "idpCa": "generated/idp-ca.pem",
   "responseBinding": "post",
-  "wantAssertionsEncrypted": true
+  "wantAssertionsEncrypted": true,
+  "ssf": {
+    "transmitter": "https://localhost:8081",
+    "pollIntervalMs": 3000
+  }
 }
