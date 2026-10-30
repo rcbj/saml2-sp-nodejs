@@ -39,7 +39,7 @@ Sign in, then do one of these at iya-sts and watch the demo's tab:
 - **Disable** the user on their **Directory → Users** page: RISC `account-disabled` ends every demo session of that person.
 - **Change the user's password**: CAEP `credential-change` is listed on the page, and ends nothing (`endOn` decides which events end sessions).
 
-**Needs iya-sts with #1227 and #1230.** #1227 lets an application hold a stored certificate. Until #1230, any write iya-sts made to the application entry erased that certificate: creating the stream, and every SAML sign-in. The receiver then answers 401 (STS-SSF-0151) until the setup script is run again.
+**Needs iya-sts with #1227 and #1230** (develop 02de0743f or later): #1227 lets an application hold a stored certificate, and #1230 keeps it there when iya-sts writes the application entry (a stream created, a sign-in recorded).
 
 When a session ends, its open tab is told at once over Server-Sent Events (`/events`, read by the static `/app.js`) and goes back to the sign-in page. The session itself is already gone on the server, so a closed tab finds it gone on the next request.
 

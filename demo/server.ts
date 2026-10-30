@@ -99,7 +99,7 @@ function startReceiver(sp: ServiceProvider): void {
     onEndSessions: (ids: string[], event: SignalEvent) => {
       for (const sid of ids) {
         sessions.delete(sid);
-        tell(sid, 'signed-out', { type: shortType(event.type), reason: event.payload.reason_user ?? event.payload.reason_admin ?? null });
+        tell(sid, 'signed-out', { type: shortType(event.type), reason: event.payload.reason_user ?? event.payload.reason_admin ?? event.payload.reason ?? null });
       }
       console.log(`ssf: ${shortType(event.type)} ended ${ids.length} local session(s)`);
     },
