@@ -9,7 +9,8 @@
  *   2. the identity provider's TLS root, if the configuration's `idpCa` file does not exist yet: taken
  *      from the TLS handshake (trust on first use) and its fingerprint printed, for you to compare with
  *      iya-sts's Server configuration → PKI page;
- *   3. this service provider's METADATA (the same as `npm run generate-metadata`), written to
+ *   3. this service provider's METADATA (as `npm run generate-metadata` does, with a loopback entityID and
+ *      assertion consumer URL moved onto the port the demo listens on), written to
  *      demo/generated/sp-metadata.xml and REGISTERED on iya-sts from that document: the application is
  *      created with it in `samlSpMetadata`, which iya-sts consumes on create, or — when it exists
  *      already — the document is consumed again with `saml2/upload-metadata`. Its ACS endpoints and
@@ -41,24 +42,31 @@
  * a compose stack keeps it.
  */
 
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { connect, type PeerCertificate } from 'node:tls';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { X509Certificate } from 'node:crypto';
 import { main as cli } from '../packages/saml2-sp-nodejs/src/cli.ts';
+import { resolveConfig, type SamlConfig } from '../packages/saml2-sp-nodejs/src/config.ts';
 import { send } from '../packages/saml2-sp-nodejs/src/http.ts';
 import { readIdpMetadata } from '../packages/saml2-sp-nodejs/src/metadata.ts';
+import { ServiceProvider } from '../packages/saml2-sp-nodejs/src/service-provider.ts';
+import { demoPort, endpointsFor } from './redirects.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 export function usage(): string {
-  return `Usage: node scripts/configure-iya-sts.ts [--config path] [--idp url]
+  return `Usage: node scripts/configure-iya-sts.ts [--config path] [--idp url] [--public-url url]
                                         [--test-user name | --no-test-user] [--dry-run]
 
   --config        The demo's SAML configuration (default: demo/saml.json)
   --idp           iya-sts's base URL; the realm's, e.g. https://host/realm/acme, for a trust realm
                   (default: $IYA_STS_URL or https://localhost:8081)
+  --public-url    Replace the origin of the file's entityID and assertion consumer URL with this URL,
+                  and keep their paths (default: unset; $PUBLIC_URL). Without it, a loopback entityID
+                  and ACS follow the running demo's PORT, then $PORT. A non-loopback URL is left as written.
   --test-user     The test user to create (default: saml-demo-user). Its password is
                   $SAML_DEMO_USER_PASSWORD, or one is generated and printed once. With
                   $SAML_DEMO_USER_PASSWORD set, an existing user's password is replaced.
@@ -71,6 +79,9 @@ The management API secret is ADMIN_API_CLIENT_SECRET or STS_ADMIN_API_CLIENT_SEC
 export interface Args {
   config: string;
   idp: string;
+  publicUrl: string;
+  /** Set when --public-url or PUBLIC_URL was given. The default does not count. */
+  publicUrlGiven: boolean;
   testUser: string;
   dryRun: boolean;
   help: boolean;
@@ -80,6 +91,8 @@ export function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = proc
   const out: Args = {
     config: resolve(repoRoot, 'demo/saml.json'),
     idp: (env.IYA_STS_URL || 'https://localhost:8081').replace(/\/+$/, ''),
+    publicUrl: (env.PUBLIC_URL || 'http://localhost:3000').replace(/\/+$/, ''),
+    publicUrlGiven: Boolean(env.PUBLIC_URL),
     testUser: 'saml-demo-user',
     dryRun: false,
     help: false,
@@ -94,6 +107,10 @@ export function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = proc
     if (arg === '--help' || arg === '-h') out.help = true;
     else if (arg === '--config') out.config = resolve(value());
     else if (arg === '--idp') out.idp = value().replace(/\/+$/, '');
+    else if (arg === '--public-url') {
+      out.publicUrl = value().replace(/\/+$/, '');
+      out.publicUrlGiven = true;
+    }
     else if (arg === '--test-user') out.testUser = value().trim();
     else if (arg === '--no-test-user') out.testUser = '';
     else if (arg === '--dry-run') out.dryRun = true;
@@ -101,12 +118,14 @@ export function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = proc
   }
   const u = new URL(out.idp);
   if (u.protocol !== 'https:') throw new Error(`--idp must be https, not ${out.idp}`);
+  if (!out.publicUrl) throw new Error('--public-url is empty');
   return out;
 }
 
 /** The files the configuration names, resolved against it. */
 export interface DemoFiles {
   entityId: string;
+  acsUrl: string;
   key: string;
   cert: string;
   idpMetadata: string;
@@ -126,9 +145,11 @@ export function filesOf(configPath: string): DemoFiles {
     return isAbsolute(p) ? p : resolve(base, p);
   };
   if (!raw.entityId) throw new Error(`${configPath} has no entityId`);
+  if (!raw.acsUrl) throw new Error(`${configPath} has no acsUrl`);
   const key = at(raw.privateKey, 'privateKey');
   return {
     entityId: raw.entityId,
+    acsUrl: raw.acsUrl,
     key,
     cert: at(raw.certificate, 'certificate'),
     idpMetadata: at(raw.idpMetadata, 'idpMetadata'),
@@ -136,6 +157,19 @@ export function filesOf(configPath: string): DemoFiles {
     spMetadata: resolve(dirname(key), 'sp-metadata.xml'),
     ssfTransmitter: raw.ssf?.transmitter,
   };
+}
+
+/**
+ * This service provider's metadata, from the configuration's key and certificate, with the entityID and
+ * assertion consumer URL this run registers. The file on disk is not what is registered: a loopback
+ * entityID is a different application on a different port.
+ */
+export function metadataFor(configPath: string, entityId: string, acsUrl: string): string {
+  const raw = JSON.parse(readFileSync(configPath, 'utf8')) as SamlConfig;
+  delete raw.idpCa;
+  raw.entityId = entityId;
+  raw.acsUrl = acsUrl;
+  return new ServiceProvider(resolveConfig(raw, dirname(resolve(configPath))), undefined).metadata();
 }
 
 /** The realm's base and the origin a token is minted at: `/realm/<id>` is kept, anything else refused. */
@@ -242,6 +276,22 @@ async function mintAdminToken(origin: string, base: string, ca: string | undefin
   return reply.body.access_token;
 }
 
+/** PORT from the running saml-demo container, when compose has one. Docker being absent is not an error. */
+export function containerPort(cwd = repoRoot): string | undefined {
+  try {
+    const id = execFileSync('docker', ['compose', 'ps', '-q', 'saml-demo'], {
+      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim().split('\n')[0];
+    if (!id) return undefined;
+    const env = execFileSync('docker', ['inspect', '-f', '{{range .Config.Env}}{{println .}}{{end}}', id], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return env.split('\n').find((line) => line.startsWith('PORT='))?.slice('PORT='.length);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   const args = parseArgs(argv);
   if (args.help) {
@@ -249,6 +299,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return;
   }
   const files = filesOf(args.config);
+  const port = demoPort(process.env.PORT, containerPort());
+  const endpoints = endpointsFor(files.entityId, files.acsUrl, {
+    publicUrl: args.publicUrl, publicUrlGiven: args.publicUrlGiven, port,
+  });
+  files.entityId = endpoints.entityId;
+  files.acsUrl = endpoints.acsUrl;
   const { origin, base } = realmOf(args.idp);
 
   if (args.dryRun) {
@@ -282,9 +338,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     ca = readFileSync(files.idpCa, 'utf8');
   }
 
-  // 3. The SP metadata, and the application registered from it.
-  await cli(['metadata', '--config', args.config, '--out', files.spMetadata]);
-  const spMetadataXml = readFileSync(files.spMetadata, 'utf8');
+  // 3. The SP metadata, built from the entityID and ACS this run registers, and the application from it.
+  const spMetadataXml = metadataFor(args.config, files.entityId, files.acsUrl);
+  mkdirSync(dirname(files.spMetadata), { recursive: true });
+  writeFileSync(files.spMetadata, spMetadataXml);
+  console.log(`Wrote the service provider metadata to ${files.spMetadata}`);
   const secret = process.env.ADMIN_API_CLIENT_SECRET || process.env.STS_ADMIN_API_CLIENT_SECRET || '';
   if (!secret) throw new Error('neither ADMIN_API_CLIENT_SECRET nor STS_ADMIN_API_CLIENT_SECRET is set, so no /admin-api token can be minted.');
   const token = await mintAdminToken(origin, base, ca, secret);

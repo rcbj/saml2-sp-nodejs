@@ -78,7 +78,7 @@ The container uses the **host's network**, so that `https://localhost:8081`, whi
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PORT` | `3000` | The port the demo listens on. It must match `acsUrl` and `entityId` in `demo/saml.json`. |
+| `PORT` | `3000` | The port the demo listens on. A loopback `entityId` and `acsUrl` in `demo/saml.json` follow it. Re-run `configure-iya-sts` after changing `PORT`, so iya-sts registers that port. |
 | `SAML_CONFIG` | `demo/saml.json` | Another configuration file. |
 | `SESSION_SECRET` | random per start | Signs the pending-request cookie. Set it to keep sign-ins in flight across a restart. |
 
