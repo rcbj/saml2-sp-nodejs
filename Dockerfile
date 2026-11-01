@@ -27,8 +27,12 @@ RUN npm ci --omit=dev --workspaces --include-workspace-root --ignore-scripts && 
 COPY --from=build /src/packages/saml2-sp-nodejs/dist packages/saml2-sp-nodejs/dist
 COPY demo/server.ts demo/saml.json demo/
 COPY demo/public demo/public
+COPY scripts/redirects.mjs scripts/
 USER node
 EXPOSE 3000
+# PORT defaults to 3000 so a run that does not set it (the CI demo job) is still healthy.
+# Compose passes PORT and overrides this. The shell form expands it; EXPOSE does not, so it stays 3000.
+ENV PORT=3000
 HEALTHCHECK --interval=15s --timeout=3s --start-period=5s \
-  CMD wget -qO- http://127.0.0.1:3000/healthz >/dev/null || exit 1
+  CMD wget -qO- http://127.0.0.1:${PORT}/healthz >/dev/null || exit 1
 CMD ["node", "demo/server.ts"]

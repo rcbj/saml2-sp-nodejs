@@ -43,6 +43,7 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EVENT, SamlError, ServiceProvider, SignalsReceiver, type ResponseBinding, type SamlLogin, type SignalEvent } from 'saml2-sp-nodejs';
+import { onPort } from '../scripts/redirects.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -62,11 +63,21 @@ const SSF = (() => {
   }
 })();
 
+// A loopback entityID and assertion consumer URL follow the port this process listens on, which is
+// what configure-iya-sts registers. Any other host is left as written. The file on disk is not rewritten.
+function portOverrides(): { entityId?: string; acsUrl?: string } {
+  const raw = JSON.parse(readFileSync(CONFIG, 'utf8')) as { entityId?: string; acsUrl?: string };
+  return {
+    ...(typeof raw.entityId === 'string' && raw.entityId ? { entityId: onPort(raw.entityId, PORT) } : {}),
+    ...(typeof raw.acsUrl === 'string' && raw.acsUrl ? { acsUrl: onPort(raw.acsUrl, PORT) } : {}),
+  };
+}
+
 // The service provider is built on first use and again after a failure, so the demo starts (and is
 // healthy) before the identity provider is reachable or the setup script has been run.
 let spPromise: Promise<ServiceProvider> | undefined;
 function serviceProvider(): Promise<ServiceProvider> {
-  spPromise ??= ServiceProvider.fromFile(CONFIG).then((sp) => {
+  spPromise ??= ServiceProvider.fromFile(CONFIG, portOverrides()).then((sp) => {
     startReceiver(sp);
     return sp;
   }, (err: unknown) => {
@@ -674,8 +685,7 @@ const server = http.createServer((req, res) => {
 });
 
 try {
-  const config = JSON.parse(readFileSync(CONFIG, 'utf8')) as { acsUrl?: string };
-  const acs = new URL(config.acsUrl ?? 'http://localhost/');
+  const acs = new URL(portOverrides().acsUrl ?? onPort('http://localhost/', PORT));
   secureCookies = acs.protocol === 'https:' || acs.hostname === 'localhost' || acs.hostname === '127.0.0.1';
 } catch (err) {
   console.warn(`cannot read ${CONFIG}: ${(err as Error).message}`);

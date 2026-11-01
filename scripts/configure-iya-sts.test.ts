@@ -4,9 +4,11 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
-import { ENCRYPTION, MULTIPLE_ACCOUNTS, filesOf, ssfCalls, idpMetadataUrl, parseArgs, planFor, realmOf } from './configure-iya-sts.ts';
+import { fileURLToPath } from 'node:url';
+import { ENCRYPTION, MULTIPLE_ACCOUNTS, filesOf, metadataFor, ssfCalls, idpMetadataUrl, parseArgs, planFor, realmOf } from './configure-iya-sts.ts';
+import { demoPort, endpointsFor, onPort } from './redirects.mjs';
 
 describe('configure-iya-sts', () => {
   const dir = mkdtempSync(join(tmpdir(), 'saml-setup-'));
@@ -63,11 +65,60 @@ describe('configure-iya-sts', () => {
   });
 
   it('takes its options, and refuses plain http', () => {
-    const a = parseArgs(['--idp', 'https://idp.test/', '--no-test-user', '--dry-run'], {});
+    const a = parseArgs(['--idp', 'https://idp.test/', '--public-url', 'http://app.test/', '--no-test-user', '--dry-run'], {});
     assert.equal(a.idp, 'https://idp.test');
+    assert.equal(a.publicUrl, 'http://app.test');
+    assert.equal(a.publicUrlGiven, true);
+    assert.equal(parseArgs([], {}).publicUrlGiven, false);
+    assert.equal(parseArgs([], { PUBLIC_URL: 'http://demo.test' }).publicUrlGiven, true);
     assert.equal(a.testUser, '');
     assert.equal(a.dryRun, true);
     assert.throws(() => parseArgs(['--idp', 'http://idp.test'], {}), /https/);
+    assert.throws(() => parseArgs(['--public-url', ''], {}), /empty/);
     assert.throws(() => parseArgs(['--bogus'], {}), /Unknown argument/);
+  });
+
+  it('registers a loopback entityID and ACS on the port the demo listens on', () => {
+    const file = { entityId: 'http://localhost:3000/saml/metadata', acsUrl: 'http://localhost:3000/saml/acs' };
+    const moved = endpointsFor(file.entityId, file.acsUrl, { publicUrlGiven: false, port: 3001 });
+    assert.equal(moved.entityId, 'http://localhost:3001/saml/metadata');
+    assert.equal(moved.acsUrl, 'http://localhost:3001/saml/acs');
+    assert.equal(onPort('http://127.0.0.1:3000/saml/acs', 3001), 'http://127.0.0.1:3001/saml/acs');
+    assert.equal(onPort('http://[::1]:3000/saml/acs', 3001), 'http://[::1]:3001/saml/acs');
+    const published = endpointsFor('https://app.example/saml/metadata', 'https://app.example/saml/acs', { publicUrlGiven: false, port: 3001 });
+    assert.equal(published.entityId, 'https://app.example/saml/metadata');
+    assert.equal(published.acsUrl, 'https://app.example/saml/acs');
+    const explicit = endpointsFor(file.entityId, file.acsUrl, { publicUrl: 'http://app.test:9', publicUrlGiven: true, port: 3001 });
+    assert.equal(explicit.entityId, 'http://app.test:9/saml/metadata');
+    assert.equal(explicit.acsUrl, 'http://app.test:9/saml/acs');
+    assert.equal(demoPort('3000', '3001'), 3001);
+    assert.equal(demoPort('3001', ''), 3001);
+    assert.equal(demoPort('3000', 'nope'), 3000);
+    assert.equal(demoPort('', undefined), undefined);
+    assert.equal(demoPort('nope', undefined), undefined);
+
+    const files = filesOf(config);
+    const endpoints = endpointsFor(files.entityId, files.acsUrl, { publicUrlGiven: false, port: 3001 });
+    files.entityId = endpoints.entityId;
+    files.acsUrl = endpoints.acsUrl;
+    const plan = planFor(files, 'https://localhost:8081', '', '<md:EntityDescriptor/>');
+    assert.equal((plan[0]!.body as { identifier: string }).identifier, 'http://localhost:3001/saml/metadata');
+    assert.ok(plan.some((c) => c.path === idpMetadataUrl('https://localhost:8081', endpoints.entityId)));
+
+    const fixtures = join(dirname(fileURLToPath(import.meta.url)), '../packages/saml2-sp-nodejs/test/fixtures');
+    const metaConfig = join(dir, 'saml-port.json');
+    writeFileSync(metaConfig, JSON.stringify({
+      entityId: file.entityId, acsUrl: file.acsUrl,
+      privateKey: join(fixtures, 'sp.key'), certificate: join(fixtures, 'sp.crt'),
+      idpMetadata: 'https://idp.example/metadata',
+      ssf: { transmitter: 'https://localhost:8081', pollIntervalMs: 3000 },
+    }));
+    const xml = metadataFor(metaConfig, endpoints.entityId, endpoints.acsUrl);
+    assert.match(xml, /entityID="http:\/\/localhost:3001\/saml\/metadata"/);
+    assert.match(xml, /Location="http:\/\/localhost:3001\/saml\/acs"/);
+    assert.doesNotMatch(xml, /localhost:3000/);
+    const registered = planFor(files, 'https://localhost:8081', '', xml)[0]!.body as { fields: { samlSpMetadata: string } };
+    assert.equal(registered.fields.samlSpMetadata, xml);
+    assert.equal(JSON.parse(readFileSync(metaConfig, 'utf8')).ssf.pollIntervalMs, 3000);
   });
 });
