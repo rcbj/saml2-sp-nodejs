@@ -90,6 +90,8 @@ app.get('/saml/metadata', (req, res) => res.type('application/samlmetadata+xml')
 
 A session at the application outlives a sign-out at the identity provider unless something tells it. `SignalsReceiver` is that something: it receives the identity provider's CAEP and RISC events and ends the matching sessions (see the [reference](../README.md#shared-signals-caep-and-risc)).
 
+`ServiceProvider` does not start a receiver. Constructing `SignalsReceiver` opts in. Set `"signals": false` to turn CAEP and RISC off: the service provider still signs in, and the application does not start a receiver or contact a transmitter. The default, omitted or `true`, is on.
+
 ```ts
 const signals = new SignalsReceiver({
   transmitter: 'https://idp.example.com',

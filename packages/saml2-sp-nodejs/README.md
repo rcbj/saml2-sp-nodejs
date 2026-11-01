@@ -67,6 +67,7 @@ const { ServiceProvider } = await import('saml2-sp-nodejs');   // or require('sa
 | `nameIdFormat` | — | The `NameIDPolicy` Format to ask for. |
 | `clockSkewSeconds` | `60` | How far the two clocks may disagree. |
 | `allowUnsolicited` | `false` | Accept a Response no request asked for (identity-provider-initiated sign-in). |
+| `signals` | `true` | CAEP and RISC. `"signals": false` turns them off: the service provider still signs in, and the application does not start a receiver or contact a transmitter. |
 
 `ServiceProvider.create(config, { baseDir })` takes the same members as an object.
 
@@ -99,6 +100,8 @@ The AuthnRequest goes on HTTP-Redirect or HTTP-POST. SAML has no artifact bindin
 ## Shared Signals: CAEP and RISC
 
 `SignalsReceiver` makes the application a Shared Signals receiver (OpenID SSF 1.0, poll delivery per RFC 8936). It has **one stream** at the identity provider, carrying CAEP session events and RISC account events about **every person** who uses the application. Each event is turned into the application's own sessions to end.
+
+`ServiceProvider` does not start a receiver. Constructing `SignalsReceiver` is the opt-in; a caller who does that has chosen to receive events. The default is on (`"signals"` omitted or `true`, and the resolved configuration then omits the property, so test `config.signals !== false`). `"signals": false` is how to turn CAEP and RISC off when the identity provider does not implement them: the service provider still signs in, and the application does not start a receiver or contact a transmitter.
 
 ```ts
 import { EVENT, ServiceProvider, SignalsReceiver } from 'saml2-sp-nodejs';

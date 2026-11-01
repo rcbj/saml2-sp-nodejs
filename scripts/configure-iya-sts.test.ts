@@ -58,6 +58,25 @@ describe('configure-iya-sts', () => {
     assert.ok(!planFor(filesOf(config), 'https://localhost:8081', '', 'x').some((c) => c.path.endsWith('/applications/add-certificate')), 'no ssf block, no access');
   });
 
+  it('with signals false, skips Shared Signals access and does not require a transmitter', () => {
+    const off = join(dir, 'saml-signals-off.json');
+    writeFileSync(off, JSON.stringify({
+      ...JSON.parse(readFileSync(config, 'utf8')),
+      signals: false,
+      ssf: { transmitter: 'https://localhost:8081' },
+    }));
+    const files = filesOf(off);
+    assert.equal(files.ssfTransmitter, undefined);
+    assert.equal(files.entityId, 'http://localhost:3000/saml/metadata');
+    assert.ok(!planFor(files, 'https://localhost:8081', '', 'x').some((c) => /\/applications\/add|\/roles\/add-member|\/tls\/trust\/add|\/applications\/add-certificate/.test(c.path)));
+    const noTransmitter = join(dir, 'saml-signals-off-no-tx.json');
+    writeFileSync(noTransmitter, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')), signals: false, ssf: {} }));
+    assert.equal(filesOf(noTransmitter).ssfTransmitter, undefined);
+    const bad = join(dir, 'saml-signals-bad.json');
+    writeFileSync(bad, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')), signals: 'no', ssf: { transmitter: 'https://localhost:8081' } }));
+    assert.throws(() => filesOf(bad), /signals must be true or false/);
+  });
+
   it('keeps a realm\'s base and refuses any other path', () => {
     assert.deepEqual(realmOf('https://idp.test/realm/acme'), { origin: 'https://idp.test', base: 'https://idp.test/realm/acme' });
     assert.throws(() => realmOf('https://idp.test/saml2'), /realm/);

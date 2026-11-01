@@ -55,6 +55,11 @@ export interface SamlConfig {
   wantAssertionsEncrypted?: boolean;
   /** Accept a Response nobody asked for (identity-provider-initiated sign-in). Default false. */
   allowUnsolicited?: boolean;
+  /**
+   * Receive CAEP and RISC. Default true. `false` tells the application not to start a receiver and not to
+   * contact a transmitter. SAML sign-in does not use it. This service provider does not start a receiver.
+   */
+  signals?: boolean;
 }
 
 /** The configuration with its files read and its defaults filled in. */
@@ -73,6 +78,8 @@ export interface ResolvedConfig {
   wantAssertionsSigned: boolean;
   wantAssertionsEncrypted: boolean;
   allowUnsolicited: boolean;
+  /** Present only when CAEP and RISC are off. Omitted means on: test `signals !== false`. */
+  signals?: false;
 }
 
 const looksLikePem = (v: string) => v.includes('-----BEGIN ');
@@ -133,6 +140,9 @@ export function resolveConfig(config: SamlConfig, baseDir = process.cwd()): Reso
   if (typeof skew !== 'number' || !Number.isFinite(skew) || skew < 0 || skew > 600) {
     throw new SamlError('config', 'clockSkewSeconds must be a number from 0 to 600');
   }
+  // Omitted or true is not copied onto the resolved object, so a caller tests `signals !== false`.
+  const signals = (config as { signals?: unknown }).signals;
+  if (signals !== undefined && typeof signals !== 'boolean') throw new SamlError('config', 'signals must be true or false');
   const out: ResolvedConfig = {
     entityId,
     acsUrl,
@@ -146,6 +156,7 @@ export function resolveConfig(config: SamlConfig, baseDir = process.cwd()): Reso
     wantAssertionsEncrypted: config.wantAssertionsEncrypted ?? false,
     allowUnsolicited: config.allowUnsolicited ?? false,
   };
+  if (signals === false) out.signals = false;
   if (config.idpCa) out.idpCa = material(config.idpCa, baseDir, 'idpCa');
   if (config.idpEntityId) out.idpEntityId = config.idpEntityId;
   if (config.nameIdFormat) out.nameIdFormat = config.nameIdFormat;

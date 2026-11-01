@@ -42,7 +42,9 @@ Verified on 8081 with two people in one browser and a tab each. A password chang
 
 ## Shared Signals: signed out by the identity provider
 
-`demo/saml.json`'s `ssf` block makes the demo a CAEP and RISC receiver. It keeps one poll stream at iya-sts, polls it every three seconds, and authenticates with mutual TLS using the SP's own key pair.
+`demo/saml.json`'s `ssf` block makes the demo a CAEP and RISC receiver. It keeps one poll stream at iya-sts, polls it every three seconds, and authenticates with mutual TLS using the SP's own key pair. That is the default (`"signals"` omitted or `true`). The shipped file keeps the `ssf` block, so this demo receives events.
+
+Set `"signals": false` to sign in without CAEP or RISC. The service provider still signs in. The demo does not start a receiver, even when the `ssf` block is still there, and it does not contact a transmitter or need transmitter metadata. The setup script then skips the Shared Signals role and scope. The events tab says signals are off.
 
 Once you're signed in, the page has two tabs. **Identity** shows what the SAML assertion said. **CAEP & RISC events** shows two things:
 
