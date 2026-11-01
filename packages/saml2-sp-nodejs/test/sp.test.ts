@@ -61,6 +61,37 @@ describe('configuration', () => {
     assert.match(sp.metadata(), /AuthnRequestsSigned="true"/);
     assert.match(sp.metadata(), /<md:KeyDescriptor use="encryption">[\s\S]*xmlenc11#aes256-gcm[\s\S]*<\/md:KeyDescriptor>/);
   });
+
+  it('omits signals unless it is false, and still resolves a normal configuration', async () => {
+    const sp = await ServiceProvider.create(config());
+    assert.equal('signals' in sp.config, false);
+    assert.equal(sp.config.entityId, SP_ENTITY);
+    assert.equal(sp.config.acsUrl, ACS);
+    assert.equal(sp.config.requestBinding, 'redirect');
+    assert.equal(sp.config.responseBinding, 'post');
+    const explicit = await ServiceProvider.create(config({ signals: true }));
+    assert.equal('signals' in explicit.config, false);
+    assert.equal(explicit.config.entityId, sp.config.entityId);
+    assert.equal(explicit.config.acsUrl, sp.config.acsUrl);
+  });
+
+  it('records signals false and still resolves the SAML fields', async () => {
+    const sp = await ServiceProvider.create(config({ signals: false, wantAssertionsEncrypted: true }));
+    assert.equal(sp.config.signals, false);
+    assert.equal(sp.config.entityId, SP_ENTITY);
+    assert.equal(sp.config.acsUrl, ACS);
+    assert.equal(sp.config.requestBinding, 'redirect');
+    assert.equal(sp.config.responseBinding, 'post');
+    assert.equal(sp.config.wantAssertionsSigned, true);
+    assert.equal(sp.config.wantAssertionsEncrypted, true);
+    assert.equal(sp.config.allowUnsolicited, false);
+    assert.equal(sp.config.clockSkewMs, 60_000);
+    assert.equal(sp.idp.entityId, IDP_ENTITY);
+  });
+
+  it('refuses a signals value that is not true or false', async () => {
+    await rejects(ServiceProvider.create(config({ signals: 'no' as never })), 'config', /^signals must be true or false$/);
+  });
 });
 
 describe('the AuthnRequest', () => {

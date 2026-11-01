@@ -28,10 +28,12 @@
 //   POST /logout          signs every account in this browser out of this application
 //   GET  /healthz         for the container's health check
 //
-// SHARED SIGNALS: with an `ssf` block in the configuration file the demo is also a CAEP and RISC receiver
-// (the library's SignalsReceiver): one poll stream at the identity provider, authenticated by mutual TLS
-// with the service provider's own key pair. An event that revokes a session, or disables, purges or
-// compromises an account, ENDS the matching local sessions here, and their open tabs are told at once.
+// SHARED SIGNALS: with an `ssf` block in the configuration file, and unless `"signals": false`, the demo is
+// also a CAEP and RISC receiver (the library's SignalsReceiver): one poll stream at the identity provider,
+// authenticated by mutual TLS with the service provider's own key pair. An event that revokes a session, or
+// disables, purges or compromises an account, ENDS the matching local sessions here, and their open tabs are
+// told at once. `"signals": false` leaves SAML sign-in as it is and does not start the receiver, even when
+// the `ssf` block is present, and does not need a transmitter.
 //
 // Two cookies. `saml_pending` holds the outstanding AuthnRequest ids, HMAC-signed, scoped to the ACS,
 // and SameSite=None: the identity provider's HTTP-POST binding brings the browser back with a CROSS-SITE
@@ -54,14 +56,19 @@ const MAX_SESSIONS = 10_000;
 const MAX_BODY = 512 * 1024;
 const STYLES = readFileSync(resolve(here, 'public/styles.css'));
 const APP_JS = readFileSync(resolve(here, 'public/app.js'));
-const SSF = (() => {
+const FILE = (() => {
   try {
-    const raw = JSON.parse(readFileSync(CONFIG, 'utf8')) as { ssf?: { transmitter?: string; pollIntervalMs?: number } };
-    return raw.ssf?.transmitter ? raw.ssf : undefined;
+    return JSON.parse(readFileSync(CONFIG, 'utf8')) as {
+      signals?: unknown;
+      ssf?: { transmitter?: string; pollIntervalMs?: number };
+    };
   } catch {
-    return undefined;
+    return {};
   }
 })();
+// CAEP and RISC stay on unless the file says otherwise. Off does not need transmitter metadata.
+const SIGNALS_OFF = FILE.signals === false;
+const SSF = (SIGNALS_OFF || !FILE.ssf?.transmitter) ? undefined : FILE.ssf;
 
 // A loopback entityID and assertion consumer URL follow the port this process listens on, which is
 // what configure-iya-sts registers. Any other host is left as written. The file on disk is not rewritten.
@@ -164,8 +171,16 @@ function logFor(sid: string, entry: LoggedEvent): void {
 
 // THE RECEIVER, started once the service provider is loaded. Its state is shown on the home page.
 let receiver: SignalsReceiver | undefined;
-let receiverState = SSF ? 'starting' : 'not configured (no ssf block in the configuration file)';
+let receiverState = SIGNALS_OFF
+  ? 'not configured (signals are off)'
+  : SSF
+    ? 'starting'
+    : 'not configured (no ssf block in the configuration file)';
 function startReceiver(sp: ServiceProvider): void {
+  if (sp.config.signals === false) {
+    receiverState = 'not configured (signals are off)';
+    return;
+  }
   if (!SSF || receiver) return;
   const r = new SignalsReceiver({
     transmitter: SSF.transmitter!,

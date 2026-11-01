@@ -2,6 +2,8 @@
 
 `SignalsReceiver` hands every verified Shared Signals event to the handlers you register, one event type at a time. This page lists every event type of OpenID CAEP 1.0 and OpenID RISC 1.0: what each means, what it carries, what the receiver does with it by default, and how to handle it yourself. The [reference](../README.md#shared-signals-caep-and-risc) covers starting the receiver.
 
+`ServiceProvider` does not start a receiver. Constructing `SignalsReceiver` opts in. `"signals": false` turns CAEP and RISC off without changing sign-in: the application does not start a receiver and does not contact a transmitter. The default, omitted or `true`, is on.
+
 * TOC
 {:toc}
 
