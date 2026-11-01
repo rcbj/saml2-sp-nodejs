@@ -21,12 +21,13 @@
  *   3a. turns on `authn.multipleAccounts` for the realm: the demo signs several people in to one browser,
  *      and with the setting off, iya-sts would END one person's session when the next signs in there
  *      (and send CAEP session-revoked for it, which ends that person's account here);
- *   3b. with an `ssf` block in the configuration, the Shared Signals receiver's access, by MUTUAL TLS
- *      with the service provider's own certificate (no token, no secret): the application declares
- *      `ssf.manage` and is made a member of the SSF_MANAGE role, the certificate is installed as a
- *      client trust anchor (`/admin-api/tls/trust/add`) and stored on the application entry
- *      (`/admin-api/applications/add-certificate`, iya-sts #1227), which is what makes the handshake's
- *      certificate this application at `/ssf/*`;
+ *   3b. with an `ssf` block in the configuration, and unless `"signals": false`, the Shared Signals
+ *      receiver's access, by MUTUAL TLS with the service provider's own certificate (no token, no
+ *      secret): the application declares `ssf.manage` and is made a member of the SSF_MANAGE role, the
+ *      certificate is installed as a client trust anchor (`/admin-api/tls/trust/add`) and stored on the
+ *      application entry (`/admin-api/applications/add-certificate`, iya-sts #1227), which is what makes
+ *      the handshake's certificate this application at `/ssf/*`. `"signals": false` skips this and does
+ *      not need a transmitter. SAML registration is unchanged;
  *   4. iya-sts's IdP METADATA for this service provider (`/saml2/metadata/<entityID>`), checked with the
  *      library's own reader and written where the configuration's `idpMetadata` points, so the library
  *      learns the IdP (entityID, SSO and artifact resolution endpoints, signing certificate) from it;
@@ -131,12 +132,21 @@ export interface DemoFiles {
   idpMetadata: string;
   idpCa: string | undefined;
   spMetadata: string;
-  /** The Shared Signals transmitter, when the configuration has an `ssf` block. */
+  /** The Shared Signals transmitter to register, when `ssf` is set and `signals` is not false. */
   ssfTransmitter: string | undefined;
 }
 
 export function filesOf(configPath: string): DemoFiles {
-  const raw = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, string | undefined> & { ssf?: { transmitter?: string } };
+  const raw = JSON.parse(readFileSync(configPath, 'utf8')) as {
+    entityId?: string;
+    acsUrl?: string;
+    privateKey?: string;
+    certificate?: string;
+    idpMetadata?: string;
+    idpCa?: string;
+    signals?: unknown;
+    ssf?: { transmitter?: string };
+  };
   const base = dirname(configPath);
   const at = (p: string | undefined, what: string) => {
     if (!p || p.includes('-----BEGIN') || /^https?:/.test(p) || p.startsWith('<')) {
@@ -146,6 +156,7 @@ export function filesOf(configPath: string): DemoFiles {
   };
   if (!raw.entityId) throw new Error(`${configPath} has no entityId`);
   if (!raw.acsUrl) throw new Error(`${configPath} has no acsUrl`);
+  if (raw.signals !== undefined && typeof raw.signals !== 'boolean') throw new Error(`${configPath}: signals must be true or false`);
   const key = at(raw.privateKey, 'privateKey');
   return {
     entityId: raw.entityId,
@@ -155,7 +166,8 @@ export function filesOf(configPath: string): DemoFiles {
     idpMetadata: at(raw.idpMetadata, 'idpMetadata'),
     idpCa: raw.idpCa ? at(raw.idpCa, 'idpCa') : undefined,
     spMetadata: resolve(dirname(key), 'sp-metadata.xml'),
-    ssfTransmitter: raw.ssf?.transmitter,
+    // Off skips the role and the scope, and does not require transmitter metadata.
+    ssfTransmitter: raw.signals === false ? undefined : raw.ssf?.transmitter,
   };
 }
 

@@ -23,7 +23,7 @@ npm install saml2-sp-nodejs
 ## Where to read
 
 - **[Server-side guide](guide.md):** keys, metadata, the login route, the assertion consumer service and the session, step by step.
-- **[Handling CAEP and RISC events](signals.md):** every CAEP and RISC event type, what it carries, what the receiver does by default, and a handler for each.
+- **[Handling CAEP and RISC events](signals.md):** every CAEP and RISC event type, what it carries, what the receiver does by default, and a handler for each. `"signals": false` turns CAEP and RISC off; the default is on. The service provider still signs in and does not start a receiver.
 - **[Configuration and API reference](reference.md):** every setting, what is checked, the bindings, encryption, errors and the API.
 - **[TypeScript API](api/)** (TypeDoc), generated from the source.
 - **[Setting up iya-sts](configure.md):** registering the application from its metadata, and reading iya-sts's metadata into the library.

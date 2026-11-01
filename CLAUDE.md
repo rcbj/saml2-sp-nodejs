@@ -66,6 +66,8 @@ Open <http://localhost:3000> and sign in as `saml-demo-user`.
 
 A loopback entityID and assertion consumer URL follow `PORT` in the running server and in `scripts/configure-iya-sts.ts`. The metadata posted to iya-sts is built from those rewritten values. Any other host is left as written. An explicit `--public-url` or a non-empty `PUBLIC_URL` replaces the origin and keeps the path. A different port is a different entityID, so run `configure-iya-sts` again after changing `PORT`. The previous `:3000` registration stays on iya-sts. `pollIntervalMs` is a millisecond pause, not a port.
 
+The shipped `demo/saml.json` has an `ssf` block, so the demo receives CAEP and RISC events. `"signals": false` turns that off: SAML sign-in is unchanged, the demo does not start `SignalsReceiver`, and `configure-iya-sts` does not register the SSF role or scope or require a transmitter. The default is on. `ServiceProvider` does not start a receiver; constructing `SignalsReceiver` opts in.
+
 ## Releases
 
 `main` publishes `M.N.P` as npm `latest`. `develop` publishes `M.N.P-next.R` as `next`. The patch is chosen at publish time by `scripts/version.mjs` from the versions already on npm. After bumping `VERSION`, run `npm run version:sync`.
