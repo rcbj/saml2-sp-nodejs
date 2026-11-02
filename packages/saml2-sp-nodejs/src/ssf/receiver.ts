@@ -27,6 +27,16 @@ import { DEFAULT_ENDING_EVENTS, DEFAULT_EVENTS_REQUESTED, EVENT, subjectOf, type
 import { verifyCompactJws, type Jwk } from './jws.ts';
 import { MemorySessionIndex, trackedFrom, type SessionIndex } from './session-index.ts';
 
+/**
+ * `s` without its trailing slashes. A loop, not `replace(/\/+$/, '')`: that regex is retried at every
+ * slash of a run that is not at the end, so a long run followed by any other character is quadratic.
+ */
+export function trimTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 0x2f) end--;
+  return s.slice(0, end);
+}
+
 const POLL_METHOD = 'urn:ietf:rfc:8936';
 
 /** One verified event, as handed to the application. */
@@ -115,7 +125,7 @@ export class SignalsReceiver {
       maxEvents: 50,
       log: console,
       ...options,
-      transmitter: options.transmitter.replace(/\/+$/, ''),
+      transmitter: trimTrailingSlashes(options.transmitter),
     } as never;
     this.#index = this.#o.sessionIndex;
   }
