@@ -1,6 +1,6 @@
 **/node_modules
-**/test
 **/dist
 .git
 demo/generated
 *.md
+# packages/saml2-sp-nodejs/test stays in the context so `docker build --target test` can copy it.

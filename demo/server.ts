@@ -27,12 +27,16 @@
 //   POST /u/<a>/logout    signs that account out of this application; the others stay
 //   POST /logout          signs every account in this browser out of this application
 //   GET  /healthz         for the container's health check
+//   GET  /live-status     JSON for the live sign-in: signedIn (any local account session), subject, receiver,
+//                         and accepted events as type and jti. No tokens.
 //
 // SHARED SIGNALS: with an `ssf` block in the configuration file, and unless `"signals": false`, the demo is
 // also a CAEP and RISC receiver (the library's SignalsReceiver): one poll stream at the identity provider,
 // authenticated by mutual TLS with the service provider's own key pair. An event that revokes a session, or
 // disables, purges or compromises an account, ENDS the matching local sessions here, and their open tabs are
-// told at once. `"signals": false` leaves SAML sign-in as it is and does not start the receiver, even when
+// told at once. The index matches a session-revoked event on the assertion's SessionIndex. When that is not
+// the CAEP session id, the receiver matches nobody, and the handler ends this demo's one session and says so.
+// `"signals": false` leaves SAML sign-in as it is and does not start the receiver, even when
 // the `ssf` block is present, and does not need a transmitter.
 //
 // Two cookies. `saml_pending` holds the outstanding AuthnRequest ids, HMAC-signed, scoped to the ACS,
@@ -160,6 +164,29 @@ const LOG_SIZE = 25;
 let sequence = 0;
 const verificationsAsked = new Map<string, string>(); // state -> the session that asked
 let streamStatus: { status: string; reason?: unknown; at: string } | undefined;
+/** Accepted events for GET /live-status. type and jti only: an event payload can carry a token. */
+const liveEvents: Array<{ type: string; jti: string }> = [];
+
+function noteLive(event: SignalEvent): void {
+  if (liveEvents.some((row) => row.type === event.type && row.jti === event.jti)) return;
+  liveEvents.push({ type: event.type, jti: event.jti });
+  if (liveEvents.length > 50) liveEvents.splice(0, liveEvents.length - 50);
+}
+
+/** Local account sessions that have not expired. signedIn is true when this is not empty. */
+function openSessions(): Array<[string, Session]> {
+  const now = Date.now();
+  const open: Array<[string, Session]> = [];
+  for (const [sid, session] of sessions) {
+    if (session.expires <= now) {
+      endSession(sid);
+      void receiver?.untrack(sid);
+      continue;
+    }
+    open.push([sid, session]);
+  }
+  return open;
+}
 
 function logFor(sid: string, entry: LoggedEvent): void {
   const s = sessions.get(sid);
@@ -201,6 +228,20 @@ function startReceiver(sp: ServiceProvider): void {
     },
   });
   r.on('*', (event: SignalEvent) => {
+    noteLive(event);
+    // The receiver already ended a session whose SessionIndex is this CAEP session id. When it is not,
+    // session-revoked matches nobody. This demo then has one account session, and that is the one to end.
+    if (event.type === EVENT.sessionRevoked && !event.ended) {
+      const open = openSessions();
+      const only = open.length === 1 ? open[0] : undefined;
+      if (only && only[1].login.sessionIndex !== event.subject.idpSession) {
+        const [sid, session] = only;
+        console.log(`ssf: the assertion SessionIndex ${session.login.sessionIndex ?? '(none)'} is not the CAEP session id ${event.subject.idpSession ?? '(none)'}; ending this demo's one session`);
+        endSession(sid);
+        void receiver?.untrack(sid);
+        tell(sid, 'signed-out', { type: shortType(event.type), reason: event.payload.reason_user ?? event.payload.reason_admin ?? event.payload.reason ?? null });
+      }
+    }
     const entry: LoggedEvent = {
       id: ++sequence,
       at: new Date().toISOString(),
@@ -476,6 +517,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const method = req.method ?? 'GET';
 
   if (url.pathname === '/healthz') return send(res, 200, 'ok', { 'content-type': 'text/plain' });
+  if (url.pathname === '/live-status' && method === 'GET') {
+    const open = openSessions();
+    return send(res, 200, JSON.stringify({
+      signedIn: open.length > 0,
+      subject: open[0]?.[1].login.nameId ?? null,
+      receiver: receiverState,
+      events: liveEvents.map((row) => ({ type: row.type, jti: row.jti })),
+    }), { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+  }
   if (url.pathname === '/styles.css') return send(res, 200, STYLES, { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'max-age=300' });
   if (url.pathname === '/app.js') return send(res, 200, APP_JS, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'max-age=300' });
 
