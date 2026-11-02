@@ -4,9 +4,11 @@
 // The back channel: fetching the identity provider's metadata and resolving an artifact. node:http(s)
 // only. TLS is always verified; `ca` adds the certificates to trust beyond node's own store (an identity
 // provider whose listener certificate chains to a private root). Answers are capped in size and time.
+// Plain http is refused unless the host is loopback (see plainHttpRefusal).
 
 import http from 'node:http';
 import https from 'node:https';
+import { isIPv4 } from 'node:net';
 import { rootCertificates } from 'node:tls';
 import { SamlError, type SamlErrorCode } from './errors.ts';
 
@@ -27,12 +29,38 @@ export interface HttpAnswer {
   body: string;
 }
 
+/** A loopback host: 127.0.0.0/8, ::1 or the name localhost. `host` is a WHATWG URL hostname. */
+export function isLoopbackHost(host: string): boolean {
+  const h = host.toLowerCase();
+  if (h === 'localhost') return true;
+  if (isIPv4(h)) return h.split('.')[0] === '127';
+  // The WHATWG parser writes IPv6 bracketed and in its shortest form, so ::1 is always "[::1]".
+  return h === '[::1]';
+}
+
+/**
+ * The refusal of a plain http URL, unless it names a loopback host, where the bytes never leave the machine.
+ * Userinfo is never loopback, so `http://localhost:80@host/` cannot pass as localhost. The message
+ * names the scheme and host[:port] only: never userinfo, path or query.
+ */
+function plainHttpRefusal(target: URL, code: SamlErrorCode): SamlError | undefined {
+  if (target.username === '' && target.password === '' && isLoopbackHost(target.hostname)) return undefined;
+  return new SamlError(code, `http://${target.host} is refused: plain http is allowed only to a loopback host `
+    + '(127.0.0.0/8, ::1, localhost); use https');
+}
+
 export function send(url: string, init: { method?: string; headers?: Record<string, string>; body?: string },
   tls: BackChannelOptions, code: SamlErrorCode): Promise<HttpAnswer> {
   const target = new URL(url);
   if (target.protocol !== 'https:' && target.protocol !== 'http:') {
     return Promise.reject(new SamlError(code, `${url} is not an http(s) URL`));
   }
+  // Every fetch this library makes goes through here: the identity provider's metadata (its signing
+  // keys), the ArtifactResolve (the signed request out, the assertion back) and the Shared Signals
+  // transmitter (SETs and the bearer token). None of them may travel in the clear off this machine, so
+  // plain http is refused before any lookup or connection unless the host is loopback.
+  const refusal = target.protocol === 'http:' ? plainHttpRefusal(target, code) : undefined;
+  if (refusal) return Promise.reject(refusal);
   const payload = init.body === undefined ? undefined : Buffer.from(init.body, 'utf8');
   const options: https.RequestOptions = {
     method: init.method ?? 'GET',
