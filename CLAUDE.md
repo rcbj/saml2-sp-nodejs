@@ -86,6 +86,8 @@ The demo image build copies that file into the image at `/app/demo/generated/idp
 
 The mechanism is `COPY demo demo` plus `.dockerignore`'s `demo/generated/*` and `!demo/generated/idp-ca.pem`. Do not replace it with a COPY that names the file or globs for it: when the file is absent, BuildKit fails on the missing path and the classic builder fails with "no source files were specified". A directory COPY of `demo/` (which always exists) succeeds in both. The container does not refresh the chain at start. `node scripts/trust-chain.mjs --config demo/saml.json --idp https://localhost:8081` refreshes the file by hand. Compose mounts `demo/generated` (for the key, the certificate and the IdP metadata), which hides the image's copy behind the host's file.
 
+**Plain http (#17).** `send()` in `packages/saml2-sp-nodejs/src/http.ts` is the one place every fetch goes through (metadata URL, `ArtifactResolve`, SSF configuration, JWKS, stream and poll). It refuses plain `http://` to a host that is not loopback (`127.0.0.0/8`, `[::1]`, `localhost`, by `isLoopbackHost()` on the WHATWG hostname) before any lookup or connection, keeping the fetch's `SamlError` code and naming only `http://host[:port]`; userinfo is never loopback. No opt-out. `test/plain-http.test.ts` covers it; `http://0.0.0.0:<port>` reaches a 127.0.0.1 listener on Linux, so its tripwire listener proves no connection is opened.
+
 ## Releases
 
 `main` publishes `M.N.P` as npm `latest`. `develop` publishes `M.N.P-next.R` as `next`. The patch is chosen at publish time by `scripts/version.mjs` from the versions already on npm. After bumping `VERSION`, run `npm run version:sync`.
