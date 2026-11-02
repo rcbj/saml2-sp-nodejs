@@ -10,10 +10,11 @@ import http from 'node:http';
 import net, { type AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 import { SamlError, ServiceProvider, SignalsReceiver, type SamlConfig } from '../src/index.ts';
-import { isLoopbackHost } from '../src/http.ts';
+import { hasWhitespaceOrControl, isLoopbackHost, send } from '../src/http.ts';
 import { ACS, IDP_ENTITY, SP_CERT, SP_ENTITY, SP_KEY, artifactFor, idpMetadata, responseXml, startArs } from './stub-idp.ts';
 
 const REFUSED = /is refused: plain http is allowed only to a loopback host/;
+const WHITESPACE = 'the URL is refused: it holds whitespace or a control character';
 const quiet = { info() {}, warn() {}, error() {} };
 
 function config(idpMetadataSource: string): SamlConfig {
@@ -81,6 +82,63 @@ describe('plain http off loopback', () => {
     await refused(metadataOf(`http://localhost:${port}@example.com/md`), 'metadata', 'example.com');
     await refused(metadataOf(`http://user:s3cret-pw@localhost:${port}/md`), 'metadata', `localhost:${port}`, 's3cret-pw');
     await refused(transmitterAt(`http://user:s3cret-pw@127.0.0.1:${port}`), 'ssf', `127.0.0.1:${port}`, 's3cret-pw');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(connections, 0);
+  });
+});
+
+// The WHATWG parser drops tabs and newlines and trims spaces, so without the refusal each of these
+// would dial the loopback tripwire (or another host than the one written); with it, nothing connects.
+describe('whitespace and control characters', () => {
+  let tripwire: net.Server;
+  let connections = 0;
+  let port = 0;
+  before(async () => {
+    tripwire = net.createServer((socket) => {
+      connections += 1;
+      socket.destroy();
+    });
+    await new Promise<void>((r) => tripwire.listen(0, '127.0.0.1', r));
+    port = (tripwire.address() as AddressInfo).port;
+  });
+  after(async () => { await new Promise((r) => tripwire.close(() => r(undefined))); });
+
+  async function refusedForWhitespace(p: Promise<unknown>, code: string) {
+    await assert.rejects(p, (err: unknown) => {
+      assert.ok(err instanceof SamlError, `expected a SamlError, got ${String(err)}`);
+      assert.equal(err.code, code, err.message);
+      assert.equal(err.message, WHITESPACE);
+      return true;
+    });
+  }
+
+  it('knows whitespace and control characters', () => {
+    for (const c of ['\t', '\n', '\r', ' ', '\u00a0', '\u0000', '\u001f', '\u007f', '\u0085', '\u2028', '\u3000', '\ufeff']) {
+      assert.equal(hasWhitespaceOrControl(`https://idp.example.com/m${c}d`), true, JSON.stringify(c));
+    }
+    assert.equal(hasWhitespaceOrControl('https://idp.example.com:8443/md?x=%20y#f'), false);
+  });
+
+  it('refuses metadata, ArtifactResolve and the transmitter before connecting', async () => {
+    for (const url of [
+      `http://127.0.0.1:${port}/m\td`,
+      `http://127.0.0.1:${port}/m d`,
+      `http://127.0.0.1:${port}/m\u00a0d`,
+      `http://local\nhost:${port}/md`,
+      `https://127.0.0.1:${port}/m\r\nd`,
+      `http://127.0.0.1:${port}/md\u007f`,
+    ]) {
+      await refusedForWhitespace(metadataOf(url), 'metadata');
+    }
+    // The configuration trims idpMetadata itself; send() refuses a trailing or leading space it is handed.
+    await refusedForWhitespace(send(`http://127.0.0.1:${port}/md `, {}, {}, 'metadata'), 'metadata');
+    await refusedForWhitespace(send(` http://127.0.0.1:${port}/md`, {}, {}, 'metadata'), 'metadata');
+    // An attribute value in metadata arrives with its tab normalized to a space, which is still refused.
+    await refusedForWhitespace(artifactAt(`http://127.0.0.1:${port}/a\trs`), 'artifact');
+    await refusedForWhitespace(artifactAt(`http://127.0.0.1:${port}/a rs`), 'artifact');
+    await refusedForWhitespace(transmitterAt(`http://127.0.0.1:${port}/s\tsf`), 'ssf');
+    await refusedForWhitespace(transmitterAt(`http://local\thost:${port}`), 'ssf');
+    await refusedForWhitespace(transmitterAt(`http://127.0.0.1:${port}/s\u00a0sf`), 'ssf');
     await new Promise((r) => setTimeout(r, 100));
     assert.equal(connections, 0);
   });

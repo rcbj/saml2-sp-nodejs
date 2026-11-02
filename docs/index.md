@@ -22,7 +22,7 @@ npm install saml2-sp-nodejs
 
 ## Plain http is for loopback only
 
-The library fetches the identity provider's metadata (when `idpMetadata` is a URL), resolves artifacts at the metadata's `ArtifactResolutionService`, and calls the Shared Signals transmitter. Each of these uses https. A plain `http://` URL is refused before any connection, with a `SamlError` of that fetch's code (`metadata`, `artifact`, `ssf`) naming only the scheme and host, unless the host is loopback: `127.0.0.0/8`, `::1` or `localhost`. A URL with userinfo is never treated as loopback. There is no setting to allow it. Your own entityID and ACS URL may be http; they are never fetched.
+The library fetches the identity provider's metadata (when `idpMetadata` is a URL), resolves artifacts at the metadata's `ArtifactResolutionService`, and calls the Shared Signals transmitter. Each of these uses https. A plain `http://` URL is refused before any connection, with a `SamlError` of that fetch's code (`metadata`, `artifact`, `ssf`) naming only the scheme and host, unless the host is loopback: `127.0.0.0/8`, `::1` or `localhost`. A URL with userinfo is never treated as loopback, and a URL holding whitespace or a control character is refused outright, so no two URL parsers can disagree about its host. Redirects are never followed. There is no setting to allow it. Your own entityID and ACS URL may be http; they are never fetched.
 
 ## Where to read
 
