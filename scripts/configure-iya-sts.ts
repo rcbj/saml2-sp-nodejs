@@ -35,7 +35,8 @@
  *   4. iya-sts's IdP METADATA for this service provider (`/saml2/metadata/<entityID>`), checked with the
  *      library's own reader and written where the configuration's `idpMetadata` points, so the library
  *      learns the IdP (entityID, SSO and artifact resolution endpoints, signing certificate) from it;
- *   5. a test user to sign in as.
+ *   5. a test user to sign in as. A password iya-sts generates for it is written to
+ *      demo/generated/<user>.password (mode 0600), never printed; only that path is.
  *
  *   ADMIN_API_CLIENT_SECRET=… node scripts/configure-iya-sts.ts
  *   node scripts/configure-iya-sts.ts --idp https://localhost:8081 --config demo/saml.json
@@ -48,7 +49,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fchmodSync, mkdirSync, openSync, readFileSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { main as cli } from '../packages/saml2-sp-nodejs/src/cli.ts';
@@ -72,8 +73,9 @@ export function usage(): string {
                   and keep their paths (default: unset; $PUBLIC_URL). Without it, a loopback entityID
                   and ACS follow the running demo's PORT, then $PORT. A non-loopback URL is left as written.
   --test-user     The test user to create (default: saml-demo-user). Its password is
-                  $SAML_DEMO_USER_PASSWORD, or one is generated and printed once. With
-                  $SAML_DEMO_USER_PASSWORD set, an existing user's password is replaced.
+                  $SAML_DEMO_USER_PASSWORD, or one is generated and written to
+                  demo/generated/<user>.password (mode 0600); only that path is printed. With that
+                  variable set, an existing user's password is replaced.
   --no-test-user  Do not create a test user.
   --dry-run       Print what would be done, and send nothing.
 
@@ -277,6 +279,34 @@ async function mintAdminToken(origin: string, base: string, ca: string | undefin
   return reply.body.access_token;
 }
 
+/**
+ * The file a generated test-user password is written to: <directory>/<username>.password. It is
+ * computed apart from the password, so the path the script prints is not derived from one.
+ */
+export function generatedFile(directory: string, username: string): string {
+  if (!username || /[/\\]/.test(username) || username === '.' || username === '..') {
+    throw new Error(`${JSON.stringify(username)} cannot name a file`);
+  }
+  return resolve(directory, `${username}.password`);
+}
+
+/**
+ * Writes text to path, readable and writable by its owner only. The file is CREATED 0600, so it is
+ * never readable by anyone else, not even for a moment; an existing file is narrowed to 0600 before
+ * it is rewritten. A generated password goes here and is never printed: a password does not belong
+ * in a log. demo/generated never enters an image except the IdP trust chain (.dockerignore).
+ */
+export function writePrivate(path: string, text: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const fd = openSync(path, 'w', 0o600);
+  try {
+    fchmodSync(fd, 0o600);
+    writeSync(fd, text);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** PORT from the running saml-demo container, when compose has one. Docker being absent is not an error. */
 export function containerPort(cwd = repoRoot): string | undefined {
   try {
@@ -420,7 +450,13 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       const made = await api('/users/create', body);
       if (!made.body.ok) throw new Error(`creating ${args.testUser} was refused: ${JSON.stringify(made.body).slice(0, 300)}`);
       console.log(`Created user ${args.testUser}.`);
-      if (made.body.password) console.log(`Generated password for ${args.testUser} (shown once): ${String(made.body.password)}`);
+      if (made.body.password) {
+        // rcbj: a generated password is never printed. It goes to a file only its owner can read,
+        // and only the path, which does not depend on the password, is printed.
+        const saved = generatedFile(resolve(dirname(resolve(args.config)), 'generated'), args.testUser);
+        writePrivate(saved, `${String(made.body.password)}\n`);
+        console.log(`Generated a password for ${args.testUser}; it is in ${saved} (readable by you only).`);
+      }
     }
   }
   console.log('Done. Start the demo with: docker compose up --build');

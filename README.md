@@ -31,7 +31,7 @@ ADMIN_API_CLIENT_SECRET=… SAML_DEMO_USER_PASSWORD=… npm run configure-iya-st
 docker compose up --build
 ```
 
-Open <http://localhost:3000> and sign in as `saml-demo-user`. See [Running the demo](docs/demo.md) and [Setting up iya-sts](docs/configure.md).
+Open <http://localhost:3000> and sign in as `saml-demo-user`. Unless `SAML_DEMO_USER_PASSWORD` sets its password, iya-sts generates one, and the install script writes it to `demo/generated/saml-demo-user.password` (created mode 0600) and prints only that path, never the password. See [Running the demo](docs/demo.md) and [Setting up iya-sts](docs/configure.md).
 
 ## Develop
 

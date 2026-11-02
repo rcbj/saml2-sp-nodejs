@@ -66,7 +66,7 @@ ADMIN_API_CLIENT_SECRET=… SAML_DEMO_USER_PASSWORD=… npm run configure-iya-st
 docker compose up --build
 ```
 
-Open <http://localhost:3000> and sign in as `saml-demo-user`.
+Open <http://localhost:3000> and sign in as `saml-demo-user`. Unless `SAML_DEMO_USER_PASSWORD` sets its password, iya-sts generates one, and the install script writes it to `demo/generated/saml-demo-user.password` (created mode 0600) and prints only that path, never the password.
 
 A loopback entityID and assertion consumer URL follow `PORT` in the running server and in `scripts/configure-iya-sts.ts`. The metadata posted to iya-sts is built from those rewritten values. Any other host is left as written. An explicit `--public-url` or a non-empty `PUBLIC_URL` replaces the origin and keeps the path. A different port is a different entityID, so run `configure-iya-sts` again after changing `PORT`. The previous `:3000` registration stays on iya-sts. `pollIntervalMs` is a millisecond pause, not a port.
 
