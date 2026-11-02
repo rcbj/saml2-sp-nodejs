@@ -57,7 +57,7 @@ const { ServiceProvider } = await import('saml2-sp-nodejs');   // or require('sa
 | `entityId` | required | This service provider's entityID. |
 | `acsUrl` | required | The assertion consumer service, where the browser comes back. |
 | `privateKey`, `certificate` | required | The RSA key every request is signed with (and encrypted assertions decrypted with), and its certificate. A file path, relative to the configuration file, or the PEM itself. |
-| `idpMetadata` | required | The identity provider's metadata: a file path, an `https` URL, or the XML. Its entityID, endpoints and signing certificates are read from it. |
+| `idpMetadata` | required | The identity provider's metadata: a file path, an `https` URL (plain `http` only to a loopback host), or the XML. Its entityID, endpoints and signing certificates are read from it. |
 | `requestBinding` | `redirect` | The AuthnRequest's binding: `redirect` (query-string signature) or `post` (enveloped signature). |
 | `responseBinding` | `post` | The binding the Response is asked for on: `post`, `artifact` or `redirect`. |
 | `wantAssertionsSigned` | `true` | Refuse an assertion that is not signed itself, even inside a signed Response. |

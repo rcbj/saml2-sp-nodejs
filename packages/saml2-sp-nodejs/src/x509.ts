@@ -61,10 +61,28 @@ export interface KeyPair {
 
 /** A new RSA key and a self-signed certificate for it, with the key usages SAML signing and encryption need. */
 export function createSelfSignedKeyPair(options: KeyPairOptions): KeyPair {
+  return selfSignedKeyPair(options, randomBytes);
+}
+
+/**
+ * A certificate serial number from 16 random bytes: a positive DER INTEGER of exactly 16 octets.
+ * The top bit of the first octet is cleared, so the INTEGER is positive (RFC 5280 4.1.2.2), and the
+ * next bit is set, so the first octet is never zero. A leading zero octet followed by one whose top
+ * bit is clear is not minimal, which DER forbids (X.690 8.3.2): OpenSSL refuses such a certificate
+ * ("illegal padding"), and clearing only the top bit produced one about one time in 256.
+ * @internal
+ */
+export function certificateSerial(random: Buffer): Buffer {
+  const serial = Buffer.from(random.subarray(0, 16));
+  serial[0] = (serial[0]! & 0x7f) | 0x40;
+  return serial;
+}
+
+/** createSelfSignedKeyPair, with its source of random bytes passed in so a test can choose them. @internal */
+export function selfSignedKeyPair(options: KeyPairOptions, random: (size: number) => Buffer): KeyPair {
   const days = options.days ?? 1095;
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: options.bits ?? 3072 });
-  const serial = randomBytes(16);
-  serial[0] = serial[0]! & 0x7f;
+  const serial = certificateSerial(random(16));
   const notBefore = new Date(Date.now() - 60_000);
   const notAfter = new Date(notBefore.getTime() + days * 86_400_000);
   const extensions = tlv(0xa3, seq(

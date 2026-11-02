@@ -31,7 +31,7 @@ ADMIN_API_CLIENT_SECRET=… SAML_DEMO_USER_PASSWORD=… npm run configure-iya-st
 docker compose up --build
 ```
 
-Open <http://localhost:3000> and sign in as `saml-demo-user`. See [Running the demo](docs/demo.md) and [Setting up iya-sts](docs/configure.md).
+Open <http://localhost:3000> and sign in as `saml-demo-user`. Unless `SAML_DEMO_USER_PASSWORD` sets its password, iya-sts generates one, and the install script writes it to `demo/generated/saml-demo-user.password` (created mode 0600) and prints only that path, never the password. See [Running the demo](docs/demo.md) and [Setting up iya-sts](docs/configure.md).
 
 ## Develop
 
@@ -54,6 +54,8 @@ The container unit suite is `docker build --target test .`. That stage is not th
 The demo image build copies that file into the image at `/app/demo/generated/idp-ca.pem`, so the image trusts that iya-sts with no bind mount and no fetch. Run the install script before you build the image. Rebuild the image after running the install script against a different iya-sts (a development iya-sts makes a new CA when it restarts). `.dockerignore` admits only that file from `demo/generated`; the key pair and both metadata documents stay out of the image. A build with no chain file yet (a fresh clone, CI's `--target test`) still succeeds; the image then has no `idpCa` file.
 
 The mechanism is `COPY demo demo` plus `.dockerignore`'s `demo/generated/*` and `!demo/generated/idp-ca.pem`. Do not replace it with a COPY that names the file or globs for it: when the file is absent, BuildKit fails on the missing path and the classic builder fails with "no source files were specified". A directory COPY of `demo/` (which always exists) succeeds in both. The container does not refresh the chain at start. `node scripts/trust-chain.mjs --config demo/saml.json --idp https://localhost:8081` refreshes the file by hand. Compose mounts `demo/generated` (for the key, the certificate and the IdP metadata), which hides the image's copy behind the host's file.
+
+**Plain http (#17).** Identity-provider metadata from a URL, artifact resolution and every Shared Signals transmitter call (configuration, stream and poll) use https. A plain `http://` URL is refused before any connection unless its host is loopback (`127.0.0.0/8`, `::1`, `localhost`), because metadata carries the signing keys, an `ArtifactResolve` returns the assertion, and Shared Signals carry SETs and the bearer token. A URL with userinfo is never loopback, and a URL holding whitespace or a control character is refused outright, so no two parsers can disagree about its host. Node's `https.request` follows no redirect, so there is no second hop to check. The `SamlError` keeps the fetch's code (`metadata`, `artifact`, `ssf`) and names the scheme and host only. There is no opt-out. The service provider's own entityID and ACS URL may stay http; they are never fetched.
 
 ## Live sign-in
 
