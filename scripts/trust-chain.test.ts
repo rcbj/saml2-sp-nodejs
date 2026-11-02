@@ -16,7 +16,7 @@ import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { readConfigFile, ServiceProvider } from '../packages/saml2-sp-nodejs/src/index.ts';
 import { IDP_ENTITY, idpMetadata } from '../packages/saml2-sp-nodejs/test/stub-idp.ts';
-import { saveTrustChain, trustPath } from './trust-chain.mjs';
+import { acceptFirstUse, saveTrustChain, trustPath } from './trust-chain.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const fixtures = join(repoRoot, 'packages/saml2-sp-nodejs/test/fixtures');
@@ -119,9 +119,11 @@ describe('the iya-sts trust chain in idpCa', () => {
     assert.equal(raw.idpCa, 'generated/idp-ca.pem');
     const dest = trustPath(raw.idpCa, demo);
     assert.equal(dest, join(demo, 'generated/idp-ca.pem'));
-    // A stale single certificate, as the old script left it, is replaced by the whole chain.
+    // A single certificate, as the old script left it, is replaced by the whole chain. It is this
+    // chain's root, so the fetch is verified against it.
     writeFileSync(dest!, `${chain.root.toString().trim()}\n`);
     const saved = await saveTrustChain(`https://127.0.0.1:${port}`, dest);
+    assert.equal(saved.verified, true);
     assert.equal(saved.count, 4);
     assert.equal(saved.anchor.fingerprint256, chain.root.fingerprint256);
     const written = readFileSync(dest!, 'utf8').match(BLOCK) ?? [];
@@ -132,6 +134,49 @@ describe('the iya-sts trust chain in idpCa', () => {
       expected.map((pem) => new X509Certificate(pem).fingerprint256),
     );
     assert.equal(new X509Certificate(written[3]!).subject, 'CN=sts Root CA');
+  });
+
+  it('with no file yet, the chain is taken on first use', async () => {
+    const saved = await saveTrustChain(`https://127.0.0.1:${port}`, join(work, 'fresh.pem'));
+    assert.equal(saved.verified, false);
+    assert.equal(saved.anchor.fingerprint256, chain.root.fingerprint256);
+  });
+
+  it('a later refresh verifies the server against the chain the file already holds', async () => {
+    const dest = join(demo, 'generated/idp-ca.pem');
+    const saved = await saveTrustChain(`https://127.0.0.1:${port}`, dest);
+    assert.equal(saved.verified, true);
+    assert.equal(saved.anchor.fingerprint256, chain.root.fingerprint256);
+  });
+
+  it('a held chain that verifies the server is not given up for a host name the leaf does not carry', async () => {
+    const dest = join(work, 'held-elsewhere.pem');
+    copyFileSync(join(demo, 'generated/idp-ca.pem'), dest);
+    await assert.rejects(saveTrustChain(`https://127.0.0.1:${elsewherePort}`, dest), /altnames|Hostname/);
+    assert.equal(readFileSync(dest, 'utf8'), readFileSync(join(demo, 'generated/idp-ca.pem'), 'utf8'));
+  });
+
+  it('a held chain from another CA (a restarted development iya-sts) is replaced on first use', async () => {
+    const other = mkdtempSync(join(tmpdir(), 'idpca-other-'));
+    const stale = makeChain(other);
+    const dest = join(work, 'stale.pem');
+    writeFileSync(dest, stale.published);
+    const saved = await saveTrustChain(`https://127.0.0.1:${port}`, dest);
+    assert.equal(saved.verified, false);
+    assert.equal(saved.anchor.fingerprint256, chain.root.fingerprint256);
+    assert.notEqual(saved.anchor.fingerprint256, stale.root.fingerprint256);
+  });
+
+  it('first use checks the host name, the presented leaf, and every link of the chain', async () => {
+    const certs = (chain.published.match(BLOCK) ?? []).map((pem) => new X509Certificate(pem));
+    const [leaf, issuing, intermediate, root] = certs as [X509Certificate, X509Certificate, X509Certificate, X509Certificate];
+    acceptFirstUse('127.0.0.1', { certs, leaf });
+    assert.throws(() => acceptFirstUse('elsewhere.example', { certs, leaf }), /altnames|Hostname/);
+    assert.throws(() => acceptFirstUse('127.0.0.1', { certs, leaf: issuing }), /handshake presented/);
+    assert.throws(() => acceptFirstUse('127.0.0.1', { certs: [leaf, intermediate, root], leaf }), /not signed/);
+    assert.throws(() => acceptFirstUse('127.0.0.1', { certs: [], leaf }), /no certificates/);
+    // Without a held chain, a server whose leaf does not name the host is refused too.
+    await assert.rejects(saveTrustChain(`https://127.0.0.1:${elsewherePort}`, join(work, 'none.pem')));
   });
 
   it('the library reads the metadata through that file, and not without it', async () => {
