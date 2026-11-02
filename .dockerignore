@@ -1,6 +1,9 @@
 **/node_modules
 **/dist
 .git
-demo/generated
+# demo/generated holds the service provider's key, its certificate and both metadata documents. Only
+# idpCa's file, the iya-sts listener CA trust chain, goes into the demo image (Dockerfile, COPY demo demo).
+demo/generated/*
+!demo/generated/idp-ca.pem
 *.md
 # packages/saml2-sp-nodejs/test stays in the context so `docker build --target test` can copy it.
