@@ -4,7 +4,9 @@
 // The back channel: fetching the identity provider's metadata and resolving an artifact. node:http(s)
 // only. TLS is always verified; `ca` adds the certificates to trust beyond node's own store (an identity
 // provider whose listener certificate chains to a private root). Answers are capped in size and time.
-// Plain http is refused unless the host is loopback (see plainHttpRefusal).
+// Plain http is refused unless the host is loopback (see plainHttpRefusal), and a URL holding whitespace
+// or a control character is refused outright (see hasWhitespaceOrControl). node:http(s) never follows a
+// redirect, and nothing here does either: a 3xx is returned to the caller as the answer.
 
 import http from 'node:http';
 import https from 'node:https';
@@ -49,8 +51,23 @@ function plainHttpRefusal(target: URL, code: SamlErrorCode): SamlError | undefin
     + '(127.0.0.0/8, ::1, localhost); use https');
 }
 
+/**
+ * Whether a URL holds whitespace (any Unicode White_Space, U+00A0 included) or a control character
+ * (C0, DEL, C1). The WHATWG parser silently drops tabs and newlines and trims leading and trailing
+ * spaces and C0 controls, so such a URL can name one host to a reader and dial another; none is ever
+ * a valid URL.
+ */
+export function hasWhitespaceOrControl(url: string): boolean {
+  return /[\s\p{Cc}]/u.test(url);
+}
+
 export function send(url: string, init: { method?: string; headers?: Record<string, string>; body?: string },
   tls: BackChannelOptions, code: SamlErrorCode): Promise<HttpAnswer> {
+  // Before parsing: the parser would quietly remove what the check below must see. The message never
+  // repeats the URL.
+  if (hasWhitespaceOrControl(url)) {
+    return Promise.reject(new SamlError(code, 'the URL is refused: it holds whitespace or a control character'));
+  }
   const target = new URL(url);
   if (target.protocol !== 'https:' && target.protocol !== 'http:') {
     return Promise.reject(new SamlError(code, `${url} is not an http(s) URL`));
