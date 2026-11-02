@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+#
+# Nightly live sign-in. The unit suite is the test stage; the live half is host Python.
+# GitHub runs this schedule only from the default branch. Push and pull-request CI stays tests.yml.
+name: Nightly
+
+on:
+  schedule:
+    - cron: '11 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: Unit suite and live sign-in
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Unit suite
+        run: docker build --target test .
+      - name: Live iya-sts sign-in
+        run: python3 scripts/live_iya_sts.py

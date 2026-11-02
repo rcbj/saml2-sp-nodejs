@@ -14,7 +14,7 @@ Node.js 22.18 or later. The package engines field says `>=22.18.0`. Continuous i
 |---|---|
 | `packages/saml2-sp-nodejs` | The library published to npm as `saml2-sp-nodejs`. Source is `src/` (`service-provider.ts`, `bindings.ts`, `response.ts`, `metadata.ts`, `signature.ts`, `encryption.ts`, `artifact.ts`, `ssf/`). Tests and the stub identity provider are `test/`. `npm run build` writes `dist/`. |
 | `demo` | The server-rendered demo. `demo/server.ts` and `demo/public/`. Config is `demo/saml.json`. |
-| `scripts` | `configure-iya-sts.ts` registers the service provider on iya-sts. Metadata is posted for the entityID and assertion consumer URL that run registers. `redirects.mjs` rewrites a loopback URL onto `PORT`. `version.mjs` stamps the published version. |
+| `scripts` | `configure-iya-sts.ts` registers the service provider on iya-sts. Metadata is posted for the entityID and assertion consumer URL that run registers. It is Node and runs inside the demo image, not with node or npm on the host. `live_iya_sts.py` is host Python: it signs the demo in to a fresh iya-sts and checks `GET /live-status`. `redirects.mjs` rewrites a loopback URL onto `PORT`. `version.mjs` stamps the published version. |
 | `docs` | The GitHub Pages site. |
 | `tools/apidocs` | TypeDoc. It is outside the npm workspace. |
 | `Dockerfile`, `docker-compose.yml` | The demo image. Compose uses host networking. |
@@ -50,7 +50,11 @@ npm run version:check
 
 `npm test` runs `node:test` on the TypeScript sources in `packages/saml2-sp-nodejs/test` and on `scripts/*.test.ts`. The library tests use the stub identity provider in `test/stub-idp.ts`, which signs responses, encrypts assertions, and resolves artifacts. `version:check` fails unless every manifest is `M.N.0`.
 
-`.github/workflows/tests.yml` also builds the demo image and checks that `/login` returns a signed Redirect AuthnRequest. That job publishes host port 3000. Do not run it while a demo is already bound there. The in-process commands above do not need the container.
+The container unit suite is `docker build --target test .`. The test stage runs `npm test` and is a sibling of the demo stage, so `docker build .` and `docker compose build` do not run it.
+
+`.github/workflows/tests.yml` also builds the demo image and checks that `/login` returns a signed Redirect AuthnRequest. That job publishes host port 3000. Do not run it while a demo is already bound there. The in-process commands above do not need the container. Do not change that workflow for the live sign-in.
+
+`.github/workflows/nightly.yml` runs `docker build --target test .` and then `python3 scripts/live_iya_sts.py` at 06:11 UTC (`11 6 * * *`), and on `workflow_dispatch`. GitHub runs the schedule only from the default branch. The live script does not bind host ports 3000 or 8081.
 
 ## Demo
 
@@ -66,7 +70,11 @@ Open <http://localhost:3000> and sign in as `saml-demo-user`.
 
 A loopback entityID and assertion consumer URL follow `PORT` in the running server and in `scripts/configure-iya-sts.ts`. The metadata posted to iya-sts is built from those rewritten values. Any other host is left as written. An explicit `--public-url` or a non-empty `PUBLIC_URL` replaces the origin and keeps the path. A different port is a different entityID, so run `configure-iya-sts` again after changing `PORT`. The previous `:3000` registration stays on iya-sts. `pollIntervalMs` is a millisecond pause, not a port.
 
-The shipped `demo/saml.json` has an `ssf` block, so the demo receives CAEP and RISC events. `"signals": false` turns that off: SAML sign-in is unchanged, the demo does not start `SignalsReceiver`, and `configure-iya-sts` does not register the SSF role or scope or require a transmitter. The default is on. `ServiceProvider` does not start a receiver; constructing `SignalsReceiver` opts in.
+The shipped `demo/saml.json` has an `ssf` block, so the demo receives CAEP and RISC events. `"signals": false` turns that off: SAML sign-in is unchanged, the demo does not start `SignalsReceiver`, and `configure-iya-sts` does not register the SSF role or scope or require a transmitter. The default is on. `ServiceProvider` does not start a receiver; constructing `SignalsReceiver` opts in. Assertion encryption is left as the shipped file has it.
+
+`GET /live-status` returns JSON and does not look at the browser cookie. `signedIn` is true when any local account session exists. `subject` is that session's NameID, or null. `receiver` is the receiver's state. `events` is the accepted events as `type` and `jti` only. No tokens. `session-revoked` ends the matching local session, so `signedIn` is false afterwards. The session index treats the assertion `SessionIndex` as the CAEP session id. When a `session-revoked` event names some other id, the receiver matches nobody; if this demo has one account session, the event handler ends it and logs that the SessionIndex is not the CAEP session id.
+
+`scripts/live_iya_sts.py` is the live half. Host Python and Docker only. Configuring the client is `node scripts/configure-iya-sts.ts` inside the demo image (`SAML` image built from this Dockerfile). Do not run node or npm on the host for it. The script starts iya-sts from `IYA_STS_IMAGE`, or builds origin/main, in memory mode with persistence and clustering off and no request workers, unless `IYA_STS_URL` is already set. It does not stop a container it did not start, and it never removes `iya-sts-live-main`, `iya-sts-live-probe`, or a name that starts with `sts`. Its own containers are `iya-sts-live-saml2-sp-nodejs` and `saml2-sp-nodejs-live-demo`.
 
 ## Releases
 
