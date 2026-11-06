@@ -36,12 +36,8 @@ export function parseXml(text: string, what = 'the message'): Document {
   }
   const problems: string[] = [];
   const parser = new DOMParser({
-    locator: {},
-    errorHandler: {
-      warning: () => {},
-      error: (msg: string) => { problems.push(msg); },
-      fatalError: (msg: string) => { problems.push(msg); },
-    },
+    // A warning is ignored. An error is collected and refused below. A fatal error also throws.
+    onError: (level, msg) => { if (level !== 'warning') problems.push(msg); },
   });
   let doc: Document;
   try {
